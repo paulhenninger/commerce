@@ -1,0 +1,15 @@
+{
+  "eventId": "00000000-0000-4000-8000-000000000001",
+  "type": "product.upserted",
+  "version": 1,
+  "occurredAt": "2026-11-16T12:00:00Z",
+  "source": "catalog",
+  "aggregateId": "MUG-BLUE",
+  "payload": {
+    "sku": "MUG-BLUE",
+    "name": "Blue mug",
+    "priceCents": 1250,
+    "currency": "USD",
+    "active": true
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "eventId": "00000000-0000-4000-8000-000000000003",
+  "type": "inventory.reserved",
+  "version": 1,
+  "occurredAt": "2026-11-16T12:00:00Z",
+  "source": "inventory",
+  "aggregateId": "01JD3K8Q2M7XW4T9V6B5N1C0ZA",
+  "payload": {
+    "orderId": "01JD3K8Q2M7XW4T9V6B5N1C0ZA"
+  }
+}

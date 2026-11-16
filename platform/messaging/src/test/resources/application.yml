@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: msgtest
+  kafka:
+    listener:
+      concurrency: 1
+
+management:
+  server:
+    port: -1
+
+logging:
+  level:
+    # No collector in tests. Export stays on (switching it off also switches off
+    # trace propagation, which the tests assert), so silence the failed exports.
+    io.opentelemetry.exporter: "OFF"
+  structured:
+    format:
+      console: ""
+
+commerce:
+  edge:
+    shared-secret: 0123456789abcdef0123456789abcdef

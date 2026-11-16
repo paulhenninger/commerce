@@ -1,0 +1,35 @@
+{
+  "eventId": "00000000-0000-4000-8000-000000000009",
+  "type": "order.return-requested",
+  "version": 1,
+  "occurredAt": "2026-11-16T12:00:00Z",
+  "source": "order",
+  "aggregateId": "01JD3K8Q2M7XW4T9V6B5N1C0ZA",
+  "payload": {
+    "orderId": "01JD3K8Q2M7XW4T9V6B5N1C0ZA",
+    "userId": 42,
+    "email": "ada@example.com",
+    "lines": [
+      {
+        "sku": "MUG-BLUE",
+        "name": "Blue mug",
+        "quantity": 2,
+        "unitPriceCents": 1250
+      },
+      {
+        "sku": "TEE-M",
+        "name": "T-shirt (M)",
+        "quantity": 1,
+        "unitPriceCents": 1999
+      }
+    ],
+    "pickupAddress": {
+      "name": "Ada Example",
+      "line1": "1 Test Street",
+      "city": "Springfield",
+      "postalCode": "12345",
+      "country": "US"
+    },
+    "reason": "Wrong size"
+  }
+}

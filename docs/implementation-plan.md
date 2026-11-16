@@ -15,7 +15,7 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-16: **milestone 0 is complete**; milestone 1 is next.
+As of 2026-11-16: **milestones 0 and 1 are complete**; milestone 2 is next.
 
 | Area | State |
 |---|---|
@@ -23,8 +23,8 @@ As of 2026-11-16: **milestone 0 is complete**; milestone 1 is next.
 | Root Gradle build (`settings.gradle`, `build.gradle`, wrapper 9.8.2) | Working: `platform:core`, `platform:messaging` and `services:identity` compile |
 | `services/identity` | Bastion 2.1.0 copied and renamed (`commerce`, package `com.thirdstone.commerce.identity`), built in the multi-project build with the OpenTelemetry starter added. `./gradlew :services:identity:build` passes: 83 tests, none skipped (`MySqlMigrationTest` ran against real MySQL), SpotBugs ran. Two test-only edits: `MySqlMigrationTest` reads `deploy/mysql/roles.sql` (the file moved), and `application-test.yml` turns trace export off. No functional changes yet (5.3 is still to do) |
 | `web/storefront` | Bastion's frontend, renamed, otherwise untouched |
-| `platform/core` | Compiles. Has: `platform-defaults.yml` (readiness = database only), auto-configuration, `TestToolingGuard`, `web/` (`Caller`, `CallerArgumentResolver`, `ApiException`, `ApiErrorHandler`, `RequestContextFilter`), `events/` (`Topics`, `EventEnvelope`, `EventCodec`, `InvalidEventException`). **Still to do (milestone 1):** the `X-Edge-Token` check in `Caller`, the payload records (`OrderEvents` …), contract fixtures, and all tests |
-| `platform/messaging` | `build.gradle` only |
+| `platform/core` | Complete (5.1), 24 tests: codec and contract fixtures for all 19 event types, `TestToolingGuard`, edge-token check. Defaults are applied by `config.PlatformDefaults` (an `EnvironmentPostProcessor`), not by `spring.config.import` |
+| `platform/messaging` | Complete (5.2), 12 integration tests against MySQL 9.7 and Kafka 4.4 in Testcontainers |
 | `services/{catalog,inventory,order,billing,shipping,notification,ops,simulators,testkit}` | Empty source directories |
 | `deploy/mysql/` | Bastion's `roles.sql` and `apply-roles.sh` (single database; to be generalised) |
 | `docs/identity/` | Bastion's docs, renamed; paths in them still assume Bastion's layout |
@@ -115,9 +115,10 @@ own unless they need extra dependencies; the root build configures them.
 - `utf8mb4`, `InnoDB`, every foreign key and lookup column indexed.
 
 **Configuration**
-- Every service's `application.yml` starts with
-  `spring.config.import: classpath:platform-defaults.yml` and sets
-  `spring.application.name` to the service name.
+- Every service's `application.yml` sets `spring.application.name` to the
+  service name. `platform-defaults.yml` and `messaging-defaults.yml` are added
+  beneath all other configuration by `PlatformDefaults` — do **not** use
+  `spring.config.import` for them: an imported file overrides its importer.
 - Settings come from environment variables with safe local defaults; secrets
   have no default. Document every variable in `docs/configuration.md`.
 - Custom settings live under `commerce.*`.
@@ -161,6 +162,15 @@ Checked against the resolved Spring Boot 4.1.2 artifacts and this machine.
 `spring-boot-starter-test`, `spring-boot-starter-webmvc-test`,
 `spring-boot-testcontainers`, `org.testcontainers:testcontainers-mysql`,
 `testcontainers-kafka`, `testcontainers-junit-jupiter`.
+
+**Tracing in tests**: `management.tracing.export.enabled=false` also disables
+trace *propagation* (the listener starts a new trace instead of continuing the
+producer's). Tests that assert propagation keep export on and silence
+`io.opentelemetry.exporter` logging instead.
+
+**Edge secret**: every service needs `commerce.edge.shared-secret` (≥ 32
+characters) or `commerce.edge.required=false`; tests set it in their
+`application.yml`.
 
 **Jackson 3**: packages are `tools.jackson.*` (annotations stay
 `com.fasterxml.jackson.annotation`); inject `tools.jackson.databind.json.JsonMapper`;
@@ -262,7 +272,7 @@ CREATE TABLE processed_events (
 | `EventRouter` | Built per listener: `EventRouter.for("inventory").on(type, PayloadClass, handler)` and `.onWithPreparation(type, PayloadClass, prepare, apply)` (prepare runs before the transaction and its result is passed to apply) |
 | `EventDispatcher` | `dispatch(ConsumerRecord<String, byte[]>, EventRouter)`: parse → find handler (none: count `ignored`) → pre-check `processed_events` → run `prepare` if any → in a transaction: `INSERT IGNORE` into `processed_events` (0 rows: count `duplicate`, return) → handler. Sets MDC (`eventId`, `eventType`, `aggregateId`). Records `commerce_events_consumed_total` and `commerce_event_processing_seconds`. A handler signals "does not apply" by returning normally after a zero-row update and calling `EventContext.ignored(reason)` |
 | `KafkaErrorHandling` | `DefaultErrorHandler` bean: `ExponentialBackOffWithMaxRetries(3)` (200 ms × 4), `InvalidEventException` not retryable, recoverer → `<topic>.dlt`, counts `commerce_events_dead_lettered_total{consumer,topic,reason}` and logs at ERROR with the trace id |
-| ~~`TopicConfiguration`~~ | Not in the services: topics and ACLs are created by the `kafka-init` job (5.13). At startup each service only verifies that the topics it uses exist and fails fast with a clear message if not |
+| ~~`TopicConfiguration`~~ | Not in the services: topics and ACLs are created by the `kafka-init` job (5.13). `spring.kafka.listener.missing-topics-fatal=true` makes a service fail at startup if a topic it consumes does not exist |
 | `ProcessedEventsPurge` | Nightly: delete `processed_events` older than 8 days, in batches |
 | `messaging-defaults.yml` | Imported by event-driven services: SASL/SCRAM-SHA-512 client settings (`security.protocol=SASL_PLAINTEXT`, JAAS from `KAFKA_USERNAME` / `KAFKA_PASSWORD`, no default password); producer `acks=all`, idempotence, `lz4`, `linger.ms=5`, `delivery.timeout.ms=30000`; consumer `auto-offset-reset=earliest`, `max.poll.records=200`, `session.timeout.ms=10000`; listener `concurrency=3`, observation on; Hikari max 10, connection timeout 2 s |
 
