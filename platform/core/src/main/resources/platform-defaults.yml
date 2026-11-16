@@ -84,8 +84,17 @@ commerce:
   # dev | int | qa | prod. Outside dev, TestToolingGuard refuses to start a service
   # that has any test tooling configured.
   environment: ${COMMERCE_ENV:dev}
+  edge:
+    # Shared by the edges and the services; X-Auth-* headers are believed only on
+    # requests that carry it. No default: a service refuses to start without it.
+    shared-secret: ${EDGE_SHARED_SECRET:}
 
 logging:
+  structured:
+    format:
+      # One JSON object per line (Elastic Common Schema), with trace and span ids;
+      # LOG_FORMAT= (empty) gives readable text when running a service by hand.
+      console: ${LOG_FORMAT:ecs}
   level:
     com.thirdstone.commerce: ${LOG_LEVEL:INFO}
     org.apache.kafka: WARN

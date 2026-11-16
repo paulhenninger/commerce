@@ -46,11 +46,22 @@ public class PlatformAutoConfiguration {
     }
 
     @Bean
-    WebMvcConfigurer callerResolverConfigurer() {
+    WebMvcConfigurer callerResolverConfigurer(Environment env) {
+        String secret = env.getProperty("commerce.edge.shared-secret", "");
+        // A service that takes callers from the edge must not start without the
+        // secret that proves a request came through it. Services with no
+        // edge-facing API (the dev simulators) opt out explicitly.
+        if (secret.isBlank() && env.getProperty("commerce.edge.required", Boolean.class, true)) {
+            throw new IllegalStateException("commerce.edge.shared-secret (EDGE_SHARED_SECRET) is not set: "
+                    + "without it this service could not tell the edge from any other client");
+        }
+        if (!secret.isBlank() && secret.length() < 32) {
+            throw new IllegalStateException("commerce.edge.shared-secret must be at least 32 characters");
+        }
         return new WebMvcConfigurer() {
             @Override
             public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
-                resolvers.add(new CallerArgumentResolver());
+                resolvers.add(new CallerArgumentResolver(secret));
             }
         };
     }

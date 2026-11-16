@@ -19,12 +19,12 @@ import java.util.List;
 public class TestToolingGuard {
 
     /** Hosts that only exist in DEV. */
-    private static final List<String> TEST_HOSTS = List.of("simulators", "testkit", "mailpit");
+    private static final List<String> TEST_HOSTS = List.of("simulators", "testkit", "mailpit", "controller");
 
     /** Settings that name where a service sends money, parcels, mail or test traffic. */
     private static final List<String> CHECKED = List.of(
             "commerce.payment.gateway-url", "commerce.carrier.url", "commerce.testkit.url",
-            "spring.mail.host");
+            "commerce.controller.url", "spring.mail.host");
 
     public TestToolingGuard(Environment env) {
         String environment = env.getProperty("commerce.environment", "dev");
