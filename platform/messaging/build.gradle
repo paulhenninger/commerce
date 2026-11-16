@@ -1,0 +1,18 @@
+// Reliable messaging for a service that owns a database: the transactional
+// outbox (state change and event commit together), idempotent consumption, and
+// Kafka listeners that retry, then park what they cannot process on a
+// dead-letter topic instead of blocking the partition.
+plugins {
+    id 'java-library'
+}
+
+dependencies {
+    api project(':platform:core')
+    api 'org.springframework.boot:spring-boot-starter-jdbc'
+    api 'org.springframework.boot:spring-boot-starter-kafka'
+    api 'org.springframework.boot:spring-boot-starter-flyway'
+    api 'org.flywaydb:flyway-mysql'
+    runtimeOnly 'com.mysql:mysql-connector-j'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}

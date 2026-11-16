@@ -1,0 +1,91 @@
+# Defaults every service imports (spring.config.import in its application.yml),
+# so they behave the same way under load, at shutdown, and in what they report.
+
+spring:
+  threads:
+    virtual:
+      # A request or a Kafka record waiting on MySQL or HTTP parks a virtual
+      # thread instead of holding one of a few hundred platform threads.
+      enabled: true
+  lifecycle:
+    # On SIGTERM: stop taking requests, finish the ones in flight, then exit.
+    timeout-per-shutdown-phase: 20s
+  main:
+    banner-mode: off
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-message: never
+  tomcat:
+    max-http-form-post-size: 64KB
+    # Bounded: past this many in-flight requests the edge sees refusals and
+    # sheds load, instead of the service queueing itself to death.
+    max-connections: 2000
+    accept-count: 200
+    connection-timeout: 5s
+    keep-alive-timeout: 30s
+  max-http-request-header-size: 16KB
+
+# Health, metrics and nothing else, on a port the edge never proxies.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9091}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      # The management port is private; components help the ops console say
+      # *what* is unhealthy (db, kafka, disk) rather than just that something is.
+      show-details: always
+      probes:
+        enabled: true
+      # A service without a database simply has no 'db' contributor to include.
+      validate-group-membership: false
+      group:
+        readiness:
+          # The database and nothing else. With Kafka down a service can still
+          # answer requests (events wait in the outbox), so Kafka's state is
+          # reported and alerted on but never takes a service out of rotation.
+          include: readinessState,db
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: ${commerce.environment}
+    distribution:
+      # Histogram buckets, so Prometheus can compute real latency percentiles
+      # across replicas (client-side percentiles cannot be aggregated).
+      percentiles-histogram:
+        http.server.requests: true
+        commerce.event.processing: true
+      slo:
+        http.server.requests: 50ms,100ms,250ms,500ms,1s,2s
+  otlp:
+    metrics:
+      export:
+        # Metrics are scraped by Prometheus; only traces go out over OTLP.
+        enabled: false
+  tracing:
+    sampling:
+      probability: ${TRACE_SAMPLING:1.0}
+  opentelemetry:
+    resource-attributes:
+      deployment.environment: ${commerce.environment}
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+
+commerce:
+  # dev | int | qa | prod. Outside dev, TestToolingGuard refuses to start a service
+  # that has any test tooling configured.
+  environment: ${COMMERCE_ENV:dev}
+
+logging:
+  level:
+    com.thirdstone.commerce: ${LOG_LEVEL:INFO}
+    org.apache.kafka: WARN

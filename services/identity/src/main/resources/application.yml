@@ -1,0 +1,147 @@
+spring:
+  application:
+    name: commerce
+
+  datasource:
+    # connectionTimeZone/forceConnectionTimeZoneToSession pin the MySQL session to UTC
+    # so DATETIME columns hold UTC no matter where the server or JVM lives.
+    # DB_PARAMS lets production add TLS, e.g. "&sslMode=VERIFY_IDENTITY".
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:commerce}?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true${DB_PARAMS:}
+    username: ${DB_USER:commerce}
+    password: ${DB_PASS:commerce}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      connection-timeout: 10000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate   # Flyway owns the schema; Hibernate only checks it
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    locations: classpath:db/migration
+
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USER:}
+    password: ${MAIL_PASS:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:false}
+          starttls:
+            enable: ${MAIL_STARTTLS:false}
+            required: ${MAIL_STARTTLS:false}
+          # Jakarta Mail defaults all three to INFINITE — a relay that blackholes
+          # TCP would otherwise hang request threads until Tomcat runs dry.
+          connectiontimeout: ${MAIL_CONNECT_TIMEOUT_MS:10000}
+          timeout: ${MAIL_READ_TIMEOUT_MS:10000}
+          writetimeout: ${MAIL_WRITE_TIMEOUT_MS:10000}
+
+  task:
+    execution:
+      pool:
+        # Bounded: mail and audit writes queue here. A flood must not grow threads
+        # without limit; past the queue, the caller runs the task itself.
+        core-size: ${ASYNC_POOL_SIZE:4}
+        max-size: ${ASYNC_POOL_SIZE:4}
+        queue-capacity: ${ASYNC_QUEUE_CAPACITY:1000}
+    scheduling:
+      pool:
+        size: ${SCHEDULER_POOL_SIZE:4}
+
+app:
+  name: ${APP_NAME:Commerce}
+  # REQUIRED — no default. Generate with: openssl rand -base64 32
+  jwt-secret: ${JWT_SECRET:}
+  access-token-minutes: ${ACCESS_TOKEN_MINUTES:15}
+  # Must match how you open the app in a browser — emailed links and the passkey
+  # origin are built from it.
+  base-url: ${APP_BASE_URL:http://localhost:5173}
+  mail-from: ${MAIL_FROM:Commerce <no-reply@commerce.local>}
+  verification-token-hours: ${VERIFICATION_TOKEN_HOURS:24}
+  reset-token-minutes: ${RESET_TOKEN_MINUTES:30}
+  email-change-token-hours: ${EMAIL_CHANGE_TOKEN_HOURS:24}
+  session:
+    idle-days: ${SESSION_IDLE_DAYS:14}
+    max-days: ${SESSION_MAX_DAYS:30}
+    reauth-minutes: ${REAUTH_MINUTES:10}
+    new-sign-in-alerts: ${NEW_SIGN_IN_ALERTS:true}
+  security:
+    # Only enable behind a reverse proxy that RESETS X-Forwarded-For to the real
+    # client address. Trusting the header on a directly-exposed app lets callers
+    # spoof their own rate-limit key.
+    trust-forwarded-for: ${TRUST_FORWARDED_FOR:false}
+    cors-origins: ${CORS_ORIGINS:http://localhost:5173}
+    admin-requires-mfa: ${ADMIN_REQUIRES_MFA:true}
+    audit-retention-days: ${AUDIT_RETENTION_DAYS:180}
+    max-request-bytes: ${MAX_REQUEST_BYTES:65536}
+    # A base URL naming another host refuses development settings (http, the
+    # published database passwords, a shared key) — see DeploymentSafetyCheck.
+    # true skips that, for a private-network trial only. Never in production.
+    allow-development-settings: ${ALLOW_DEVELOPMENT_SETTINGS:false}
+  passwords:
+    min-length: ${PASSWORD_MIN_LENGTH:12}
+    max-length: ${PASSWORD_MAX_LENGTH:128}
+    breach-check: ${PASSWORD_BREACH_CHECK:true}
+  encryption:
+    # REQUIRED — no default. Generate with: openssl rand -base64 32
+    # Encrypts TOTP secrets at rest. Back it up separately from the database:
+    # losing it means every user must re-enrol their authenticator app.
+    key: ${DATA_ENCRYPTION_KEY:}
+    previous-keys: ${DATA_ENCRYPTION_PREVIOUS_KEYS:}
+  signup:
+    open-by-default: ${SIGNUPS_OPEN:true}
+    block-disposable: ${SIGNUP_BLOCK_DISPOSABLE:true}
+    check-mx: ${SIGNUP_CHECK_MX:true}
+    purge-unverified-days: ${PURGE_UNVERIFIED_DAYS:7}
+  turnstile:
+    site-key: ${TURNSTILE_SITE_KEY:}
+    secret-key: ${TURNSTILE_SECRET_KEY:}
+  passkeys:
+    rp-id: ${PASSKEY_RP_ID:}
+    extra-origins: ${PASSKEY_EXTRA_ORIGINS:}
+  admin:
+    bootstrap-email: ${BOOTSTRAP_ADMIN_EMAIL:}
+
+server:
+  port: ${SERVER_PORT:8080}
+  # Never reveal stack traces or exception messages in error pages.
+  error:
+    include-stacktrace: never
+    include-message: never
+  tomcat:
+    # Cheap DoS insurance: bounded headers and form posts.
+    max-http-form-post-size: 64KB
+    max-http-response-header-size: 16KB
+  max-http-request-header-size: 16KB
+
+# Actuator lives on its own port, which the bundled nginx never proxies:
+# health for orchestrators, Prometheus metrics for the scraper. Keep it off the
+# public internet.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9091}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    com.thirdstone.commerce.identity: INFO
+    # Structured, one-line-per-event security log; ship it to your SIEM.
+    commerce.audit: INFO

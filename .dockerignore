@@ -1,0 +1,12 @@
+.git
+.gradle
+.idea
+**/build
+**/node_modules
+**/dist
+web
+docs
+*.log
+.env
+**/*.env
+!**/*.env.example

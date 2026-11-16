@@ -1,0 +1,18 @@
+// What every service does the same way: structured logs with trace ids, the
+// caller's identity as vouched for by the gateway, uniform JSON errors, the event
+// envelope and topic names, and the guard that keeps test tooling out of prod.
+plugins {
+    id 'java-library'
+}
+
+dependencies {
+    api 'org.springframework.boot:spring-boot-starter-webmvc'
+    api 'org.springframework.boot:spring-boot-starter-validation'
+    // Health probes and Prometheus metrics on a private management port.
+    api 'org.springframework.boot:spring-boot-starter-actuator'
+    // Traces over OTLP; trace and span ids land in every log line.
+    api 'org.springframework.boot:spring-boot-starter-opentelemetry'
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}

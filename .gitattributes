@@ -1,0 +1,9 @@
+# Shell scripts must keep LF endings even on Windows checkouts, or the Linux build
+# container fails with "./gradlew: not found" (the shebang ends in \r).
+gradlew text eol=lf
+*.sh    text eol=lf
+*.bat   text eol=crlf
+*.jar   binary
+*.sql   text eol=lf
+*.conf  text eol=lf
+*.ttf   binary

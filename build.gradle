@@ -1,0 +1,72 @@
+// Root build: versions and conventions shared by every module. Each service is
+// an independently deployable Spring Boot application; they share source only
+// through platform:core and platform:messaging, never through each other.
+
+plugins {
+    id 'org.springframework.boot' version '4.1.2' apply false
+    id 'io.spring.dependency-management' version '1.1.7' apply false
+    id 'com.github.spotbugs' version '6.5.13' apply false
+}
+
+allprojects {
+    group = 'com.thirdstone'
+    version = '0.1.0'
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+// Every module that holds code: the leaves (:platform:core, :services:order, ...),
+// not the bare 'platform' and 'services' containers.
+configure(subprojects.findAll { it.path.count(':') == 2 }) {
+    apply plugin: 'java'
+    apply plugin: 'io.spring.dependency-management'
+
+    java {
+        toolchain {
+            // The current LTS. CI fails if this, the Dockerfile and ci.yml disagree.
+            languageVersion = JavaLanguageVersion.of(25)
+        }
+    }
+
+    // One set of versions (Spring Boot's) for every module, libraries included.
+    dependencyManagement {
+        imports {
+            mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
+        }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        options.compilerArgs << '-Xlint:deprecation' << '-parameters'
+        options.encoding = 'UTF-8'
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+
+    dependencies {
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+}
+
+// The services other than identity (which keeps its own, fuller build file) are
+// plain Boot applications on the platform libraries.
+def platformServices = ['catalog', 'inventory', 'order', 'billing', 'shipping', 'notification', 'ops', 'simulators', 'testkit']
+configure(subprojects.findAll { it.parent?.name == 'services' && it.name in platformServices }) {
+    apply plugin: 'org.springframework.boot'
+
+    dependencies {
+        implementation project(':platform:core')
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    }
+
+    // One predictable jar name per service for the Dockerfile.
+    tasks.named('bootJar') {
+        archiveFileName = "${project.name}.jar"
+    }
+    tasks.named('jar') {
+        enabled = false
+    }
+}

@@ -1,0 +1,26 @@
+plugins {
+    // Lets Gradle auto-download the JDK the toolchain asks for.
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'commerce'
+
+// Shared libraries: what every service does the same way (logging, tracing,
+// errors, the event envelope) and the transactional messaging kit.
+include 'platform:core'
+include 'platform:messaging'
+
+// Deployed everywhere.
+include 'services:identity'
+include 'services:catalog'
+include 'services:inventory'
+include 'services:order'
+include 'services:billing'
+include 'services:shipping'
+include 'services:notification'
+include 'services:ops'
+
+// Deployed to DEV only — never to int, qa or prod (see deploy/compose.dev.yml and
+// scripts/verify-clean-deployments.sh, which CI runs).
+include 'services:simulators'
+include 'services:testkit'

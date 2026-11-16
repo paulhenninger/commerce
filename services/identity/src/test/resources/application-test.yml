@@ -1,0 +1,43 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:commerce;DB_CLOSE_DELAY=-1;MODE=MySQL
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      # H2 can't run the MySQL migrations; MigrationTest runs them on real MySQL.
+      ddl-auto: create-drop
+  flyway:
+    enabled: false
+  mail:
+    host: localhost
+    port: 3025
+
+management:
+  server:
+    port: -1
+  tracing:
+    export:
+      # No collector in tests; without this every span export logs a stack trace.
+      enabled: false
+
+app:
+  jwt-secret: dGVzdC1zZWNyZXQtbXVzdC1iZS0yNTYtYml0cy1sb25nISE=
+  base-url: http://localhost:5173
+  mail-from: Commerce Test <test@commerce.local>
+  encryption:
+    key: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+  security:
+    # Per-class opt-in (see RateLimitingIntegrationTest): otherwise the shared
+    # in-memory budgets would make tests depend on each other's order.
+    rate-limits-enabled: false
+  passwords:
+    min-length: 12
+    breach-check: false
+  signup:
+    check-mx: false
+  session:
+    new-sign-in-alerts: true
+  admin:
+    bootstrap-email: boss@example.com
