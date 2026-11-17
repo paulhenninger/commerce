@@ -1,5 +1,5 @@
-# Defaults every service imports (spring.config.import in its application.yml),
-# so they behave the same way under load, at shutdown, and in what they report.
+# Defaults for every service, applied beneath all other configuration by
+# PlatformDefaults, so they behave the same way under load, at shutdown, and in what they report.
 
 spring:
   threads:
