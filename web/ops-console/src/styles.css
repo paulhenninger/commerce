@@ -206,6 +206,14 @@ button.full { width: 100%; }
 .links { display: flex; gap: 1rem; margin: 0; }
 .button-row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
 
+select { font: inherit; width: 100%; padding: 0.45rem 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); color: var(--ink); }
+.slider { display: grid; grid-template-columns: 1fr 4rem; align-items: center; column-gap: 0.75rem; }
+.slider label { grid-column: 1 / -1; }
+.slider input[type=range] { padding: 0; }
+.figures.compact .figure-n { font-size: 1.3rem; }
+.fault { display: grid; gap: 0.25rem; padding: 0.5rem 0; border-top: 1px solid var(--rule); }
+label.inline { display: flex; align-items: center; gap: 0.5rem; font-weight: 400; margin: 0; }
+label.inline input[type=checkbox] { width: auto; }
 label { display: block; font-weight: 550; margin: 0.75rem 0 0.25rem; }
 input, textarea { font: inherit; width: 100%; padding: 0.5rem 0.6rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); color: var(--ink); }
 form button { margin-top: 0.75rem; }

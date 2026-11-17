@@ -18,6 +18,15 @@ export function Rail() {
         <li><NavLink to="/kafka">Kafka</NavLink></li>
         <li><NavLink to="/business">Business</NavLink></li>
       </ul>
+      {config?.testkit && (
+        <>
+          <p className="rail-section">Test tools (DEV)</p>
+          <ul className="rail-links">
+            <li><NavLink to="/simulator">Simulated shoppers</NavLink></li>
+            <li><NavLink to="/chaos">Chaos lab</NavLink></li>
+          </ul>
+        </>
+      )}
       <p className="rail-section">Services</p>
       <ul className="rail-links rail-services">
         {config?.services.map((s) => (

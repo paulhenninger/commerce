@@ -84,6 +84,8 @@ app:
     ops-requires-mfa: ${OPS_REQUIRE_MFA:true}
     audit-retention-days: ${AUDIT_RETENTION_DAYS:180}
     max-request-bytes: ${MAX_REQUEST_BYTES:65536}
+    # Argon2id hashes running at once (~19 MiB of heap each); more wait, then 503.
+    max-concurrent-hashes: ${MAX_CONCURRENT_HASHES:4}
     # A base URL naming another host refuses development settings (http, the
     # published database passwords, a shared key) — see DeploymentSafetyCheck.
     # true skips that, for a private-network trial only. Never in production.

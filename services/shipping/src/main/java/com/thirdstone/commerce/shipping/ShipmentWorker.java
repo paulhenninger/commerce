@@ -22,6 +22,13 @@ class ShipmentWorker {
     private static final Logger log = LoggerFactory.getLogger(ShipmentWorker.class);
     private static final Duration LEASE = Duration.ofSeconds(30);
     private static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
+    /** Shipments claimed per pass; at most CONCURRENT carrier calls at once (the DB pool is 10). */
+    static final int BATCH = 100;
+    private static final int CONCURRENT = 8;
+
+    private final java.util.concurrent.ExecutorService workers =
+            java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+    private final java.util.concurrent.Semaphore concurrency = new java.util.concurrent.Semaphore(CONCURRENT);
 
     private final ShipmentRepository shipments;
     private final ShippingService shipping;
@@ -40,30 +47,58 @@ class ShipmentWorker {
 
     @Scheduled(fixedDelayString = "${commerce.shipping.worker-interval-millis:2000}")
     void work() {
-        List<String> due = tx.execute(s -> shipments.claimDue(20, LEASE));
-        if (due == null) {
+        List<String> due;
+        do {
+            due = tx.execute(s -> shipments.claimDue(BATCH, LEASE));
+            if (due == null || due.isEmpty()) {
+                return;
+            }
+            // Carrier calls are slow I/O: several at once, each on a virtual
+            // thread, so one slow call does not hold up the rest of the batch.
+            List<java.util.concurrent.Future<?>> calls = new java.util.ArrayList<>();
+            for (String id : due) {
+                calls.add(workers.submit(() -> {
+                    concurrency.acquireUninterruptibly();
+                    try {
+                        handle(id);
+                    } finally {
+                        concurrency.release();
+                    }
+                }));
+            }
+            for (var call : calls) {
+                try {
+                    call.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (java.util.concurrent.ExecutionException e) {
+                    log.atError().log("Shipment work failed: {}", e.getCause().toString());
+                }
+            }
+            // A full batch means more is waiting: carry on now rather than after the delay.
+        } while (due.size() == BATCH);
+    }
+
+    private void handle(String id) {
+        Shipment s = shipments.find(id).orElse(null);
+        if (s == null) {
             return;
         }
-        for (String id : due) {
-            Shipment s = shipments.find(id).orElse(null);
-            if (s == null) {
-                continue;
+        try {
+            // Outside any transaction: the carrier may be slow.
+            if (s.status().equals("PENDING")) {
+                CarrierClient.Booking booking = carrier.book(s.orderId(), s.direction());
+                tx.executeWithoutResult(t -> shipping.booked(s, booking, props.shipping().pollInterval()));
+            } else {
+                String status = carrier.status(s.trackingNumber());
+                tx.executeWithoutResult(t -> shipping.tracked(s, status, props.shipping().pollInterval()));
             }
-            try {
-                // Outside any transaction: the carrier may be slow.
-                if (s.status().equals("PENDING")) {
-                    CarrierClient.Booking booking = carrier.book(s.orderId(), s.direction());
-                    tx.executeWithoutResult(t -> shipping.booked(s, booking, props.shipping().pollInterval()));
-                } else {
-                    String status = carrier.status(s.trackingNumber());
-                    tx.executeWithoutResult(t -> shipping.tracked(s, status, props.shipping().pollInterval()));
-                }
-            } catch (CarrierUnavailableException e) {
-                Duration retry = backoff(s.attempts());
-                shipments.failed(s.id(), e.getMessage(), retry);
-                log.atWarn().addKeyValue("orderId", s.orderId()).addKeyValue("attempts", s.attempts() + 1)
-                        .addKeyValue("retryInSeconds", retry.toSeconds()).log("Carrier call failed: {}", e.getMessage());
-            }
+        } catch (CarrierUnavailableException e) {
+            Duration retry = backoff(s.attempts());
+            shipments.failed(s.id(), e.getMessage(), retry);
+            log.atWarn().addKeyValue("orderId", s.orderId()).addKeyValue("attempts", s.attempts() + 1)
+                    .addKeyValue("retryInSeconds", retry.toSeconds()).log("Carrier call failed: {}", e.getMessage());
         }
     }
 

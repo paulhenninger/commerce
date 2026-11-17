@@ -15,7 +15,9 @@ import com.thirdstone.commerce.platform.web.PageResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.env.Environment;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,9 +47,12 @@ class OpsController {
     private final LiveFeed live;
     private final OpsProperties props;
     private final Environment env;
+    private final TestkitProxy testkit;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OpsController.class);
 
     OpsController(SystemView system, KafkaInspector kafka, DeadLetterReplay replay, IncidentService incidents,
-                  LiveFeed live, OpsProperties props, Environment env) {
+                  LiveFeed live, OpsProperties props, Environment env, TestkitProxy testkit) {
+        this.testkit = testkit;
         this.system = system;
         this.kafka = kafka;
         this.replay = replay;
@@ -63,7 +68,7 @@ class OpsController {
         String environment = system.environment();
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("environment", environment);
-        config.put("testkit", "dev".equals(environment) && !env.getProperty("commerce.testkit.url", "").isBlank());
+        config.put("testkit", testkit.available());
         config.put("grafanaUrl", props.grafanaUrl());
         config.put("services", props.services());
         config.put("replayRequiresMfa", props.replayRequiresMfa());
@@ -164,10 +169,16 @@ class OpsController {
         return live.subscribe();
     }
 
-    /** DEV only, from milestone 7: the testkit's API. Absent anywhere else. */
+    /** DEV only: the testkit's API (shoppers, chaos lab). Absent (404) anywhere else. */
     @RequestMapping("/testkit/**")
-    void testkit(Caller caller) {
+    ResponseEntity<byte[]> testkit(Caller caller, HttpServletRequest request,
+                                   @RequestBody(required = false) byte[] body) {
         caller.requireAdmin();
-        throw ApiException.notFound("Testkit");
+        String path = request.getRequestURI().substring("/api/v1/ops/testkit".length());
+        if (!request.getMethod().equals("GET")) {
+            log.atWarn().addKeyValue("actor", caller.userId()).addKeyValue("method", request.getMethod())
+                    .addKeyValue("path", path).log("Testkit changed from the console");
+        }
+        return testkit.forward(request.getMethod(), path.isEmpty() ? "/status" : path, request.getQueryString(), body);
     }
 }

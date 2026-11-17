@@ -72,7 +72,12 @@ public record AppProperties(
             /** Security-event rows older than this are purged nightly. */
             @DefaultValue("180") int auditRetentionDays,
             /** Largest request body the API will read, in bytes. */
-            @DefaultValue("65536") long maxRequestBytes
+            @DefaultValue("65536") long maxRequestBytes,
+            /**
+             * Password hashes allowed to run at once (Argon2id: ~19 MiB of heap each).
+             * Past this, requests wait up to 10 s, then get 503: memory stays bounded.
+             */
+            @DefaultValue("4") int maxConcurrentHashes
     ) {
     }
 
