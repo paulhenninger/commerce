@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { completeMfa, login, passkeyLogin, resendVerification } from '../api/auth';
 import { ApiError, messageOf } from '../api/client';
 import { passkeysSupported } from '../api/webauthn';
@@ -8,6 +8,10 @@ import { useAuth } from '../auth/AuthContext';
 export default function LoginPage() {
   const { setUser, setPasswordBreached } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Back to the page that sent here (only a path within this site).
+  const from = (location.state as { from?: string } | null)?.from;
+  const next = from && from.startsWith('/') && !from.startsWith('//') ? from : '/';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null);
@@ -30,7 +34,7 @@ export default function LoginPage() {
         setMfaToken(result.mfaToken);
       } else {
         setUser(result.user);
-        navigate('/');
+        navigate(next);
       }
     } catch (err) {
       setError(messageOf(err));
@@ -47,7 +51,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       setUser(await completeMfa(mfaToken, code));
-      navigate('/');
+      navigate(next);
     } catch (err) {
       setError(messageOf(err));
       setCode('');
@@ -63,7 +67,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       setUser(await passkeyLogin());
-      navigate('/');
+      navigate(next);
     } catch (err) {
       setError(messageOf(err));
     } finally {

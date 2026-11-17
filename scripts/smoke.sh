@@ -333,4 +333,9 @@ if printf '%s' "$out" | grep -q 'commerce\.\|Exception\|rror'; then
 fi
 pass "the intruder principal signs in but sees no topics"
 
+# Leave the shop as it was: the smoke product comes off sale (not deleted — its
+# orders still refer to it).
+status PUT "/api/v1/backoffice/catalog/products/$sku" "${admin_auth[@]}" -H 'Content-Type: application/json' \
+  --data '{"name":"'"$name"'","category":"smoke","priceCents":1250,"currency":"USD","active":false}' >/dev/null || true
+
 echo "smoke: $passed checks passed"

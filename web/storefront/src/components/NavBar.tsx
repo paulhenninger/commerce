@@ -1,8 +1,10 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { useCart } from '../cart/CartContext';
 
 export function NavBar() {
   const { user, signOut } = useAuth();
+  const { count } = useCart();
   const navigate = useNavigate();
 
   async function handleSignOut() {
@@ -16,11 +18,13 @@ export function NavBar() {
         ⬢ Commerce
       </Link>
       <nav className="navbar-links">
+        <NavLink to="/" end>Shop</NavLink>
+        <NavLink to="/cart">Cart{count > 0 ? ` (${count})` : ''}</NavLink>
         {user ? (
           <>
-            <NavLink to="/">Dashboard</NavLink>
+            <NavLink to="/orders">Orders</NavLink>
             <NavLink to="/account">Account</NavLink>
-            {user.role === 'ADMIN' && <NavLink to="/admin">Admin</NavLink>}
+            {user.role === 'ADMIN' && <NavLink to="/backoffice">Back office</NavLink>}
             <button type="button" className="link-button" onClick={handleSignOut}>
               Sign out
             </button>
