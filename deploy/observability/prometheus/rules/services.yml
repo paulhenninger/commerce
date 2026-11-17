@@ -32,6 +32,9 @@ groups:
       - <<: *service-down
         expr: absent(up{job="services", service="notification"} == 1)
         labels: {severity: critical, service: notification}
+      - <<: *service-down
+        expr: absent(up{job="services", service="ops"} == 1)
+        labels: {severity: critical, service: ops}
 
       - alert: ServiceReplicaDown
         # Fewer healthy instances than this service has had in the last hour.

@@ -650,6 +650,13 @@ console which environment it is in and whether the testkit exists; outside dev
 the Simulator and Chaos pages do not render and the `/api/v1/ops/testkit/**`
 proxy returns 404.
 
+As built: the live feed and the dead-letter browser read Kafka with `assign`
+and no consumer group, so every ops replica sees every partition and nothing
+the console does can disturb a service's group or commit an offset. The
+Alertmanager webhook (`POST /internal/alerts`) is protected by network
+placement only: `/internal` is refused at both edges, and only containers on
+the telemetry network can reach it.
+
 The ops service observes; the one thing it can change is to replay a dead
 letter. Its sources: Prometheus's HTTP API, Kafka's admin API, its live-feed
 consumer group, short-lived consumers to read dead letters, Loki's HTTP API

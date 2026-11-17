@@ -23,7 +23,7 @@ ARG API_BURST=100
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 COPY nginx/trusted-proxies.conf /etc/nginx/trusted-proxies.conf
 COPY nginx/security-headers.conf nginx/api-headers.conf nginx/proxy-base.conf nginx/proxy-public.conf \
-     nginx/proxy-authed.conf nginx/authz.conf /etc/nginx/snippets/
+     nginx/proxy-authed.conf nginx/proxy-caller.conf nginx/authz.conf /etc/nginx/snippets/
 COPY nginx/upstreams/ /etc/nginx/upstreams/
 COPY nginx/routes/ /etc/nginx/routes/
 RUN rm -f /etc/nginx/upstreams/README.md /etc/nginx/routes/README.md \

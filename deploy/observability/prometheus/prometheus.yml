@@ -23,7 +23,7 @@ scrape_configs:
   - job_name: services
     metrics_path: /actuator/prometheus
     dns_sd_configs:
-      - names: [identity, catalog, inventory, order, billing, shipping, notification]
+      - names: [identity, catalog, inventory, order, billing, shipping, notification, ops]
         type: A
         port: 9091
         refresh_interval: 5s

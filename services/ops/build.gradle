@@ -1,0 +1,4 @@
+dependencies {
+    // Prometheus and Loki are asked over HTTP with Boot's instrumented builder.
+    implementation 'org.springframework.boot:spring-boot-starter-restclient'
+}
