@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: simulators
+
+commerce:
+  edge:
+    # No edge in front: the simulators are called by billing and shipping on the
+    # sandbox network and have no notion of a signed-in user.
+    required: false
+  simulators:
+    # The key billing and shipping must present; empty accepts any.
+    api-key: ${SIMULATOR_API_KEY:}
+    carrier:
+      dispatch-after: ${CARRIER_DISPATCH_AFTER:5s}
+      deliver-after: ${CARRIER_DELIVER_AFTER:15s}

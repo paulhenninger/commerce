@@ -823,7 +823,7 @@ the ones it needs.
 
 | Network | Members | Purpose |
 |---|---|---|
-| `edge` | storefront-web, ops-web, identity, catalog, order, inventory, ops | HTTP from the edges to services |
+| `edge` | storefront-web, ops-web, identity, catalog, order, inventory, billing (read-only back office), ops | HTTP from the edges to services |
 | `sim` (dev) | testkit, storefront-web | Simulated shoppers reaching the storefront edge the way browsers do |
 | `control` (dev) | ops, controller, testkit | The console's instance controls and experiments |
 | `docker` (dev) | controller, docker-proxy | The only path to the Docker API |
@@ -836,7 +836,8 @@ the ones it needs.
 | `*-ingress` (masquerade off) | one per published port group | Published ports in, nothing out |
 
 The edges cannot reach MySQL or Kafka. Nothing but the edges publishes an
-application port. Tool UIs (Grafana, and in dev Prometheus, Alertmanager,
+application port, except in dev the simulators' fault switches (`127.0.0.1:8090`, for
+the chaos lab and `scripts/smoke.sh`). Tool UIs (Grafana, and in dev Prometheus, Alertmanager,
 Mailpit) are published on loopback only.
 
 ### Containers

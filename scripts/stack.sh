@@ -41,6 +41,18 @@ random() {  # 40 characters, safe in JAAS strings, nginx config and URLs
   head -c 512 /dev/urandom | base64 | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-40
 }
 
+generated() {  # <line from the example> → the line, with any placeholder filled in
+  case "$1" in
+    *=__GENERATE_B64__) printf '%s=%s
+' "${1%%=*}" "$(head -c 32 /dev/urandom | base64 | tr -d '
+')" ;;
+    *=__GENERATE__)     printf '%s=%s
+' "${1%%=*}" "$(random)" ;;
+    *)                  printf '%s
+' "$1" ;;
+  esac
+}
+
 if [ ! -f "$env_file" ]; then
   if [ "$env" != dev ]; then
     echo "stack: $env_file does not exist. Copy deploy/env/$env.env.example and fill it in." >&2
@@ -48,13 +60,19 @@ if [ ! -f "$env_file" ]; then
   fi
   umask 077
   while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      *=__GENERATE_B64__) printf '%s=%s\n' "${line%%=*}" "$(head -c 32 /dev/urandom | base64 | tr -d '\n')" ;;
-      *=__GENERATE__)     printf '%s=%s\n' "${line%%=*}" "$(random)" ;;
-      *)                  printf '%s\n' "$line" ;;
-    esac
+    generated "$line"
   done < "$deploy/env/dev.env.example" > "$env_file"
   echo "stack: created $env_file with generated secrets" >&2
+elif [ "$env" = dev ]; then
+  # Settings added to the example since this file was made: append them, so an
+  # existing DEV setup (and its data) keeps working after a pull.
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    if ! grep -q "^${line%%=*}=" "$env_file"; then
+      generated "$line" >> "$env_file"
+      echo "stack: added ${line%%=*} to $env_file" >&2
+    fi
+  done < "$deploy/env/dev.env.example"
 fi
 
 files=(-f "$deploy/compose.yml")

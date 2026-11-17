@@ -35,6 +35,34 @@ services:
       mailpit:
         condition: service_started
 
+  # A fake payment provider and carrier, with fault switches. Its admin API
+  # (faults) is published on loopback for the chaos lab and smoke.sh.
+  simulators:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: simulators
+    image: commerce-simulators:${IMAGE_TAG:-local}
+    networks: [sandbox, telemetry, simulators-ingress]
+    environment:
+      COMMERCE_ENV: dev
+      SIMULATOR_API_KEY: ${PAYMENT_GATEWAY_KEY:?Set PAYMENT_GATEWAY_KEY}
+      OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+    ports:
+      - "127.0.0.1:${SIMULATORS_PORT:-8090}:8080"
+    tmpfs:
+      - /tmp:size=64m
+    mem_limit: 256m
+    pids_limit: 256
+
+  billing:
+    networks: [sandbox]
+    depends_on:
+      simulators:
+        condition: service_healthy
+
   # The lab's principals: testkit, testkit-chaos, intruder.
   kafka-init:
     environment:
@@ -45,6 +73,18 @@ services:
 
 networks:
   # Fixed ranges: see compose.yml.
+  # billing, shipping ↔ simulators
+  sandbox:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.22.0/24
+  simulators-ingress:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.23.0/24
   # services ↔ mailpit
   mail:
     internal: true
