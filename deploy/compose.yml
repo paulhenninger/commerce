@@ -429,6 +429,37 @@ services:
       MAIL_FROM: ${MAIL_FROM:?Set MAIL_FROM}
       APP_BASE_URL: ${APP_BASE_URL:?Set APP_BASE_URL}
 
+  # The monitoring site's API. Observes everything; can change one thing (replay
+  # a dead letter). Reaches Prometheus and Loki on the telemetry network, Kafka's
+  # admin API on the events network, and probes the edges on the edge network.
+  ops:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: ops
+    image: commerce-ops:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [edge, data, events, telemetry]
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:mysql://mysql:3306/ops?sslMode=REQUIRED
+      DB_USER: ops_app
+      DB_PASSWORD: ${OPS_DB_PASSWORD:?Set OPS_DB_PASSWORD}
+      DB_OWNER_USER: ops_owner
+      DB_OWNER_PASSWORD: ${OPS_DB_OWNER_PASSWORD:?Set OPS_DB_OWNER_PASSWORD}
+      KAFKA_USERNAME: ops
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD_OPS:?Set KAFKA_PASSWORD_OPS}
+      PROMETHEUS_URL: http://prometheus:9090
+      LOKI_URL: http://loki:3100
+      GRAFANA_PUBLIC_URL: ${GRAFANA_PUBLIC_URL:-http://localhost:3000}
+      OPS_REQUIRE_MFA: ${OPS_REQUIRE_MFA:-true}
+
   # ------------------------------------------------------------ observability
   # Metrics (Prometheus, alerts via Alertmanager), logs (Loki), traces (Tempo),
   # collected by Alloy and shown in Grafana. Losing any of it does not affect the
@@ -619,6 +650,27 @@ services:
     mem_limit: 128m
     pids_limit: 128
 
+
+  ops-web:
+    <<: *hardened
+    build:
+      context: ../web/ops-console
+    image: commerce-ops-web:${IMAGE_TAG:-local}
+    depends_on:
+      identity:
+        condition: service_healthy
+      ops:
+        condition: service_healthy
+    networks: [edge, ops-ingress]
+    environment:
+      EDGE_SHARED_SECRET: ${EDGE_SHARED_SECRET:?Set EDGE_SHARED_SECRET}
+    ports:
+      - "127.0.0.1:${OPS_CONSOLE_PORT:-8082}:8080"
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 96m
+    pids_limit: 128
+
 networks:
   # Each network has a fixed /24 inside COMMERCE_NET.0.0/16 (scripts/stack.sh sets a
   # different /16 per environment), so the stack never depends on Docker's default
@@ -648,6 +700,12 @@ networks:
     ipam:
       config:
         - subnet: ${COMMERCE_NET:-10.77}.4.0/24
+  ops-ingress:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.8.0/24
   grafana-ingress:
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "false"

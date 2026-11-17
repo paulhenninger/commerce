@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: ops
+
+commerce:
+  ops:
+    prometheus-url: ${PROMETHEUS_URL:http://prometheus:9090}
+    loki-url: ${LOKI_URL:http://loki:3100}
+    # Where an administrator's browser reaches Grafana (links only).
+    grafana-url: ${GRAFANA_PUBLIC_URL:http://localhost:3000}
+    services: identity,catalog,inventory,order,billing,shipping,notification,ops
+    consumer-groups: catalog,order,inventory,billing,shipping,notification
+    # What "is the site up for a customer" means: public pages of each edge.
+    probes: storefront=http://storefront-web:8080/api/v1/catalog/products,ops-console=http://ops-web:8080/healthz
+    # Replaying a dead letter re-publishes an event: it needs a two-factor session.
+    replay-requires-mfa: ${OPS_REQUIRE_MFA:true}
+  testkit:
+    # DEV only (TestToolingGuard refuses it elsewhere).
+    url: ${TESTKIT_URL:}
