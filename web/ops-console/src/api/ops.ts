@@ -9,6 +9,30 @@ export interface OpsConfig {
   grafanaUrl: string;
   services: string[];
   replayRequiresMfa: boolean;
+  instanceControl: boolean;
+}
+
+export interface InstanceRow {
+  service: string;
+  name: string;
+  containerId: string | null;
+  state: string;
+  health: string | null;
+  scraped: boolean;
+  uptimeSeconds: number | null;
+  heapBytes: number | null;
+  relayLeader: boolean;
+  partitions: Record<string, number[]>;
+  brokerId: number | null;
+  activeController: boolean | null;
+  partitionsLed: number | null;
+  controllable: boolean;
+  address: string | null;
+}
+
+export interface Instances {
+  control: boolean;
+  rows: InstanceRow[];
 }
 
 export interface ServiceTile {
@@ -180,6 +204,9 @@ export const ops = {
       method: 'POST',
       body: JSON.stringify({ partition, offset }),
     }),
+  instances: () => api<Instances>(`${OPS}/instances`),
+  act: (id: string, action: string) =>
+    api<{ name: string; state: string }>(`${OPS}/instances/${encodeURIComponent(id)}/${action}`, { method: 'POST' }),
   incidents: (status: string | null, page: number) =>
     api<Page<Incident>>(`${OPS}/incidents?page=${page}&size=50${status ? `&status=${status}` : ''}`),
   incident: (id: number) => api<Incident>(`${OPS}/incidents/${id}`),

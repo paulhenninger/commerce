@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: controller
+
+commerce:
+  edge:
+    # Reached only by the ops service on the control network.
+    required: false
+  controller:
+    docker-url: ${DOCKER_PROXY_URL:http://docker-proxy:2375}
+    api-version: ${DOCKER_API_VERSION:v1.47}
+    # The Compose project whose containers may be acted on.
+    project: ${COMPOSE_PROJECT:}

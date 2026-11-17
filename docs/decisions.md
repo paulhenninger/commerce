@@ -551,6 +551,12 @@ console requests to it only when the environment is dev. Every action is
 recorded. Outside dev none of this exists and the Instances page is read-only,
 fed by Prometheus and Kafka.
 
+**As built (milestone 9a).** The proxy is nginx with an explicit method-and-path
+allowlist rather than `tecnativa/docker-socket-proxy`, whose rules cannot allow
+the lifecycle actions without also allowing container creation and exec (its
+`POST=1` switch applies to every allowed section). `scripts/verify-instances.py`
+checks that create, exec, images, volumes and updates are refused.
+
 **Consequences.** Failures can be injected and undone from the same screen that
 shows their effect. The Docker socket is present in DEV behind two layers of
 restriction; it is absent from INT, QA and PROD, which CI verifies.

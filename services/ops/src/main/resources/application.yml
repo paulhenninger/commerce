@@ -17,3 +17,6 @@ commerce:
   testkit:
     # DEV only (TestToolingGuard refuses it elsewhere).
     url: ${TESTKIT_URL:}
+  controller:
+    # DEV only: instance control (TestToolingGuard refuses it elsewhere).
+    url: ${CONTROLLER_URL:}
