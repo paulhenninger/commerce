@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: order
+
+commerce:
+  order:
+    # Orders still waiting for stock or payment after this are cancelled (TIMEOUT)
+    # and compensated; it is also the deadline carried to billing (expiresAt).
+    saga-timeout: ${ORDER_SAGA_TIMEOUT:2m}
+    timeout-check-millis: 5000
+    return-window-days: ${RETURN_WINDOW_DAYS:30}
+    # Load shedding: past this many orders in flight, new ones get 503.
+    max-in-flight: ${ORDER_MAX_IN_FLIGHT:5000}

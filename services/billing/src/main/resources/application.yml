@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: billing
+
+commerce:
+  payment:
+    # Required, no default: billing must never guess where money goes.
+    gateway-url: ${PAYMENT_GATEWAY_URL}
+    api-key: ${PAYMENT_GATEWAY_KEY}

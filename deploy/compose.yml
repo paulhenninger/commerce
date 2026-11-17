@@ -291,6 +291,85 @@ services:
       KAFKA_USERNAME: catalog
       KAFKA_PASSWORD: ${KAFKA_PASSWORD_CATALOG:?Set KAFKA_PASSWORD_CATALOG}
 
+  inventory:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: inventory
+    image: commerce-inventory:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [edge, data, events, telemetry]
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:mysql://mysql:3306/inventory?sslMode=REQUIRED
+      DB_USER: inventory_app
+      DB_PASSWORD: ${INVENTORY_DB_PASSWORD:?Set INVENTORY_DB_PASSWORD}
+      DB_OWNER_USER: inventory_owner
+      DB_OWNER_PASSWORD: ${INVENTORY_DB_OWNER_PASSWORD:?Set INVENTORY_DB_OWNER_PASSWORD}
+      KAFKA_USERNAME: inventory
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD_INVENTORY:?Set KAFKA_PASSWORD_INVENTORY}
+
+  order:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: order
+    image: commerce-order:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [edge, data, events, telemetry]
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:mysql://mysql:3306/orders?sslMode=REQUIRED
+      DB_USER: orders_app
+      DB_PASSWORD: ${ORDERS_DB_PASSWORD:?Set ORDERS_DB_PASSWORD}
+      DB_OWNER_USER: orders_owner
+      DB_OWNER_PASSWORD: ${ORDERS_DB_OWNER_PASSWORD:?Set ORDERS_DB_OWNER_PASSWORD}
+      KAFKA_USERNAME: order
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD_ORDER:?Set KAFKA_PASSWORD_ORDER}
+      ORDER_SAGA_TIMEOUT: ${ORDER_SAGA_TIMEOUT:-2m}
+      ORDER_MAX_IN_FLIGHT: ${ORDER_MAX_IN_FLIGHT:-5000}
+      RETURN_WINDOW_DAYS: ${RETURN_WINDOW_DAYS:-30}
+
+  billing:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: billing
+    image: commerce-billing:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [edge, data, events, telemetry]
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:mysql://mysql:3306/billing?sslMode=REQUIRED
+      DB_USER: billing_app
+      DB_PASSWORD: ${BILLING_DB_PASSWORD:?Set BILLING_DB_PASSWORD}
+      DB_OWNER_USER: billing_owner
+      DB_OWNER_PASSWORD: ${BILLING_DB_OWNER_PASSWORD:?Set BILLING_DB_OWNER_PASSWORD}
+      KAFKA_USERNAME: billing
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD_BILLING:?Set KAFKA_PASSWORD_BILLING}
+      # Where money goes. Required everywhere; outside dev it must be a real
+      # provider (TestToolingGuard refuses the simulators).
+      PAYMENT_GATEWAY_URL: ${PAYMENT_GATEWAY_URL:?Set PAYMENT_GATEWAY_URL}
+      PAYMENT_GATEWAY_KEY: ${PAYMENT_GATEWAY_KEY:?Set PAYMENT_GATEWAY_KEY}
+
   # -------------------------------------------------------------------- edges
 
   storefront-web:
@@ -305,6 +384,12 @@ services:
       identity:
         condition: service_healthy
       catalog:
+        condition: service_healthy
+      order:
+        condition: service_healthy
+      inventory:
+        condition: service_healthy
+      billing:
         condition: service_healthy
     networks: [edge, storefront-ingress]
     environment:

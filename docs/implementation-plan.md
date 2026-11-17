@@ -15,7 +15,7 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-17: **milestones 0–2 are complete**; milestone 3 is next.
+As of 2026-11-17: **milestones 0–3 are complete**; milestone 4 is next.
 
 | Area | State |
 |---|---|
@@ -26,9 +26,13 @@ As of 2026-11-17: **milestones 0–2 are complete**; milestone 3 is next.
 | `platform/core` | Complete (5.1), 25 tests. Also `web.PageRequest`/`PageResponse`, `data.Ids` (ULID-style ids), `data.Sql` (UTC `DATETIME` ↔ `Instant`) |
 | `platform/messaging` | Complete (5.2), 12 integration tests. **Test fixtures** (`testFixtures`, used by every event-driven service): `CommerceContainers` (MySQL + Kafka with all topics, shared per JVM), `Edge` (requests as the edge forwards them), `EventBus` (publish events, await what a service announces) |
 | `services/catalog` | Complete (5.4), 7 integration tests |
-| `services/{inventory,order,billing,shipping,notification,ops,simulators,testkit,controller}` | Not started. A service joins the build (`settings.gradle`) once it has `src/main/resources/application.yml` |
-| `deploy/` | `compose.yml` (mysql, mysql-init, kafka-1, kafka-init, identity, catalog, storefront-web), `compose.dev.yml` (mailpit, dev Kafka principals), `env/dev.env.example`, `mysql/` (all databases and logins, exporter login), `kafka/start.sh` (SASL/ACL broker) and `kafka/init.sh` (credentials, topics, ACLs). No HA overlay, observability or other environments yet |
-| `scripts/` | `stack.sh` (generates `deploy/env/dev.env` with random secrets on first use), `smoke.sh` (18 checks: edge routing, sign-up via Mailpit, forged identity, Kafka access control) |
+| `services/inventory` | Complete for 5.5 (incl. `order.returned` restock), 6 integration tests |
+| `services/order` | 5.6: API (place, list, get, cancel, return), back office, saga incl. shipping and refund events, saga timeout, load shedding, metrics. 11 integration tests. The return and shipping paths are coded but first exercised end to end in milestone 4. Extra column `return_reason` |
+| `services/billing` | Complete for 5.7, 8 integration tests against a fake provider (charge, decline, unavailable after one retry, expired, duplicate, cancel before/after charge) |
+| `services/simulators` | Payment and carrier simulators with fault switches (architecture §11), refuses to start outside dev, 6 tests |
+| `services/{shipping,notification,ops,testkit,controller}` | Not started. A service joins the build (`settings.gradle`) once it has `src/main/resources/application.yml` |
+| `deploy/` | `compose.yml` (mysql, mysql-init, kafka-1, kafka-init, identity, catalog, inventory, order, billing, storefront-web), `compose.dev.yml` (mailpit, simulators with its fault API on `127.0.0.1:8090`, dev Kafka principals), `env/dev.env.example`, `mysql/`, `kafka/`. No HA overlay, observability or other environments yet |
+| `scripts/` | `stack.sh` (generates `deploy/env/dev.env` on first use and appends settings added to the example later), `smoke.sh` (43 checks on a fresh stack: edge routing, sign-up, forged identity, back office, the order saga's happy path and every failure branch with stock restored, customer cancel with refund, Kafka access control). The saga *timeout* branch is proved by `SagaTimeoutIntegrationTest`, not by smoke.sh (it takes the full 2 min) |
 | `services/Dockerfile` | One multi-stage file for every JVM service (`--build-arg SERVICE=…`); compiles once, readiness healthcheck |
 | `docs/identity/` | Bastion's docs, renamed; paths in them still assume Bastion's layout |
 | Root files | `LICENSE`, `SECURITY.md`, `.gitattributes`, `.gitleaks.toml`, `.trivyignore` from Bastion; `.gitignore`, `.dockerignore`. Git repository initialised on `main` |

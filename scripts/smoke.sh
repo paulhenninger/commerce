@@ -47,6 +47,21 @@ expect() {  # <name> <expected status> <method> <path> [curl args…]
 json() {  # <field> → the first string value of "field" in $body
   printf '%s' "$body" | grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4
 }
+number() {  # <field> → the first numeric value of "field" in $body
+  printf '%s' "$body" | grep -o "\"$1\":-\{0,1\}[0-9]*" | head -1 | cut -d: -f2
+}
+verification_token() {  # <email> → the token in the newest verification email to it (waits up to 20 s)
+  local id token
+  for _ in $(seq 1 20); do
+    id=$(curl -s "$MAILPIT/api/v1/search?query=to:%22$1%22" | grep -o '"ID":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    if [ -n "$id" ]; then
+      token=$(curl -s "$MAILPIT/api/v1/message/$id" | grep -o 'verify-email#token=[A-Za-z0-9_-]*' | head -1 \
+        | cut -d= -f2 || true)
+      if [ -n "$token" ]; then printf '%s' "$token"; return; fi
+    fi
+    sleep 1
+  done
+}
 
 echo "Edge"
 expect "storefront page is served" 200 GET /
@@ -95,6 +110,131 @@ direct=$(stack exec -T storefront-web wget -q -S -O /dev/null \
   http://catalog:8080/api/v1/backoffice/catalog/products 2>&1 | grep -o 'HTTP/1.1 [0-9]*' | head -1 || true)
 [ "$direct" = "HTTP/1.1 401" ] || fail "a service ignores X-Auth-* without the edge token" "got: ${direct:-no answer}"
 pass "a service ignores X-Auth-* without the edge token"
+
+echo "Back office (administrator)"
+admin_email="$(setting BOOTSTRAP_ADMIN_EMAIL)"
+admin_password="$(setting DEV_ADMIN_PASSWORD)"
+[ -n "$admin_email" ] && [ -n "$admin_password" ] || fail "dev.env names the administrator" \
+  "BOOTSTRAP_ADMIN_EMAIL and DEV_ADMIN_PASSWORD (scripts/stack.sh dev adds missing settings)"
+admin_login='{"email":"'"$admin_email"'","password":"'"$admin_password"'"}'
+if [ "$(status POST /api/v1/auth/login -H 'Content-Type: application/json' --data "$admin_login")" != 200 ]; then
+  # First run on this stack: the administrator signs up like anyone else and is
+  # promoted on verification (BOOTSTRAP_ADMIN_EMAIL).
+  expect "the administrator signs up" 201 POST /api/v1/auth/signup -H 'Content-Type: application/json' \
+    --data "$admin_login"
+  token=$(verification_token "$admin_email")
+  [ -n "$token" ] || fail "the administrator's verification email arrives"
+  expect "the administrator verifies" 200 POST /api/v1/auth/verify-email -H 'Content-Type: application/json' \
+    --data '{"token":"'"$token"'","password":"'"$admin_password"'"}'
+fi
+expect "the administrator signs in" 200 POST /api/v1/auth/login -H 'Content-Type: application/json' --data "$admin_login"
+admin=$(json accessToken)
+admin_auth=(-H "Authorization: Bearer $admin")
+shopper_auth=(-H "Authorization: Bearer $access")
+
+sku="SMOKE-$(date +%s)-$RANDOM"
+name="Smoke mug $sku"
+expect "an administrator adds a product" 200 PUT "/api/v1/backoffice/catalog/products/$sku" "${admin_auth[@]}" \
+  -H 'Content-Type: application/json' \
+  --data '{"name":"'"$name"'","category":"smoke","priceCents":1250,"currency":"USD","active":true}'
+expect "an administrator sets its stock" 200 PUT "/api/v1/backoffice/inventory/stock/$sku" "${admin_auth[@]}" \
+  -H 'Content-Type: application/json' --data '{"onHand":5}'
+
+available() {  # → the catalog's "available" figure for the smoke product (the back office reads it uncached)
+  status GET "/api/v1/backoffice/catalog/products?q=$(printf '%s' "$name" | sed 's/ /%20/g')" "${admin_auth[@]}" >/dev/null
+  body=$(cat "$body_file")
+  number available
+}
+wait_available() {  # <name> <units>
+  for _ in $(seq 1 30); do
+    [ "$(available)" = "$2" ] && { pass "$1"; return; }
+    sleep 1
+  done
+  fail "$1" "expected $2 available, saw $(available)"
+}
+wait_available "stock reaches the shop window" 5
+
+order_body() {  # <quantity> <payment method> <expected total>
+  printf '{"lines":[{"sku":"%s","quantity":%s}],"shippingAddress":{"name":"Smoke Test","line1":"1 Test Street","city":"Springfield","postalCode":"12345","country":"US"},"paymentMethod":"%s","expectedTotalCents":%s}' \
+    "$sku" "$1" "$2" "$3"
+}
+place() {  # <name> <quantity> <payment method> → order id in $order_id. Waits for the order
+           # service to have heard of the product (it learns prices from catalog events).
+  local key got
+  key="smoke-$(date +%s)-$RANDOM$RANDOM"
+  for _ in $(seq 1 30); do
+    got=$(status POST /api/v1/orders "${shopper_auth[@]}" -H 'Content-Type: application/json' \
+      -H "Idempotency-Key: $key" --data "$(order_body "$2" "$3" $(( $2 * 1250 )))")
+    body=$(cat "$body_file")
+    [ "$got" = 202 ] && break
+    [ "$got" = 400 ] || fail "$1" "expected HTTP 202, got $got: ${body:0:300}"
+    sleep 1
+  done
+  [ "$got" = 202 ] || fail "$1" "the order service never learned the product: ${body:0:300}"
+  order_id=$(json id)
+  pass "$1"
+}
+settles() {  # <name> <order id> <status> [cancel reason] — waits up to 60 s
+  local seen=""
+  for _ in $(seq 1 60); do
+    status GET "/api/v1/orders/$2" "${shopper_auth[@]}" >/dev/null
+    body=$(cat "$body_file")
+    seen=$(json status)
+    if [ "$seen" = "$3" ]; then
+      if [ -n "${4:-}" ] && [ "$(json cancelReason)" != "$4" ]; then
+        fail "$1" "cancelled with $(json cancelReason), expected $4"
+      fi
+      pass "$1"; return
+    fi
+    sleep 1
+  done
+  fail "$1" "still $seen after 60 s"
+}
+
+echo "Orders"
+place "a customer places an order" 2 tok_visa
+happy="$order_id"
+settles "the order is confirmed" "$happy" CONFIRMED
+wait_available "confirmed units leave the shop window" 3
+
+expect "an order priced at a stale total is refused" 409 POST /api/v1/orders "${shopper_auth[@]}" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: smoke-stale-$RANDOM$RANDOM" --data "$(order_body 1 tok_visa 999)"
+[ "$(json code)" = PRICE_CHANGED ] || fail "the refusal says the price changed" "$body"
+pass "the refusal says the price changed"
+
+place "an order for more than is in stock" 4 tok_visa
+settles "it is cancelled as out of stock" "$order_id" CANCELLED OUT_OF_STOCK
+wait_available "nothing was held for it" 3
+
+place "an order paid with a declined card" 1 tok_decline
+settles "it is cancelled as declined" "$order_id" CANCELLED PAYMENT_DECLINED
+wait_available "its reservation is released" 3
+
+SIMULATORS="http://localhost:$(setting SIMULATORS_PORT)"
+fault() {  # <target> <json>
+  curl -s -o /dev/null -w '%{http_code}' -X PUT "$SIMULATORS/admin/faults/$1" -H 'Content-Type: application/json' --data "$2"
+}
+heal() { fault payment '{"latencyMs":0,"errorRate":0,"outage":false}' >/dev/null || true; }
+trap 'heal; rm -f "$body_file"' EXIT
+[ "$(fault payment '{"latencyMs":0,"errorRate":0,"outage":true}')" = 200 ] || fail "the payment provider can be taken down"
+place "an order while the payment provider is down" 1 tok_visa
+settles "it is cancelled as payment unavailable" "$order_id" CANCELLED PAYMENT_UNAVAILABLE
+heal
+wait_available "its reservation is released" 3
+
+expect "the customer cancels the confirmed order" 200 POST "/api/v1/orders/$happy/cancel" "${shopper_auth[@]}"
+[ "$(json status)" = CANCELLED ] || fail "the cancelled order says so" "$body"
+wait_available "the cancelled units are back on sale" 5
+for _ in $(seq 1 30); do
+  status GET "/api/v1/backoffice/billing/payments?orderId=$happy" "${admin_auth[@]}" >/dev/null
+  body=$(cat "$body_file")
+  [ "$(json status)" = REFUNDED ] && break
+  sleep 1
+done
+[ "$(json status)" = REFUNDED ] || fail "the customer's payment is refunded" "$body"
+pass "the customer's payment is refunded"
+expect "a cancelled order cannot be cancelled again" 409 POST "/api/v1/orders/$happy/cancel" "${shopper_auth[@]}"
+expect "an anonymous caller cannot see the order" 401 GET "/api/v1/orders/$happy"
 
 echo "Kafka access control"
 kafka() {  # <principal or ''> <command…>: runs a Kafka CLI tool inside the broker container as that principal

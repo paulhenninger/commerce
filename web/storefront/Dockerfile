@@ -21,12 +21,14 @@ RUN apk upgrade --no-cache && mkdir -p /etc/nginx/upstreams /etc/nginx/routes
 ARG API_RATE=50
 ARG API_BURST=100
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
-RUN sed -i -e "s/\${API_RATE}/${API_RATE}/g" -e "s/\${API_BURST}/${API_BURST}/g" /etc/nginx/nginx.conf
 COPY nginx/trusted-proxies.conf /etc/nginx/trusted-proxies.conf
 COPY nginx/security-headers.conf nginx/api-headers.conf nginx/proxy-base.conf nginx/proxy-public.conf \
      nginx/proxy-authed.conf nginx/authz.conf /etc/nginx/snippets/
 COPY nginx/upstreams/ /etc/nginx/upstreams/
 COPY nginx/routes/ /etc/nginx/routes/
+RUN rm -f /etc/nginx/upstreams/README.md /etc/nginx/routes/README.md \
+ && sed -i -e "s/\${API_RATE}/${API_RATE}/g" -e "s/\${API_BURST}/${API_BURST}/g" \
+      /etc/nginx/nginx.conf /etc/nginx/routes/*.conf
 COPY nginx/start.sh /etc/nginx/start.sh
 USER 101
 COPY --from=build /workspace/dist /usr/share/nginx/html

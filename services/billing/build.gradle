@@ -1,0 +1,5 @@
+dependencies {
+    // The payment provider's circuit breaker, reported to Prometheus.
+    implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
+    implementation 'io.github.resilience4j:resilience4j-micrometer:2.4.0'
+}
