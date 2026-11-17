@@ -166,7 +166,7 @@ class MySqlMigrationTest {
     /**
      * DatabaseLoginCheck's query, on real MySQL: the container's own login (all rights
      * on the database, as a single-login deployment would have) and root are refused,
-     * and the commerce_app login that deploy/mysql/roles.sql creates passes.
+     * and the {@code <database>_app} login that deploy/mysql/roles.sql creates passes.
      */
     @Test
     @Order(5)
@@ -187,6 +187,7 @@ class MySqlMigrationTest {
                     .anySatisfy(p -> assertThat(p).contains("whole server"));
         }
         assertThat(DatabaseLoginCheckProbe.problems(new JdbcTemplate(
-                new DriverManagerDataSource(MYSQL.getJdbcUrl(), "commerce_app", "app-test-password")))).isEmpty();
+                // roles.sql names the logins after the database it is run in.
+                new DriverManagerDataSource(MYSQL.getJdbcUrl(), MYSQL.getDatabaseName() + "_app", "app-test-password")))).isEmpty();
     }
 }

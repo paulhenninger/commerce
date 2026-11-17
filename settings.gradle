@@ -10,17 +10,14 @@ rootProject.name = 'commerce'
 include 'platform:core'
 include 'platform:messaging'
 
-// Deployed everywhere.
-include 'services:identity'
-include 'services:catalog'
-include 'services:inventory'
-include 'services:order'
-include 'services:billing'
-include 'services:shipping'
-include 'services:notification'
-include 'services:ops'
-
-// Deployed to DEV only — never to int, qa or prod (see deploy/compose.dev.yml and
-// scripts/verify-clean-deployments.sh, which CI runs).
-include 'services:simulators'
-include 'services:testkit'
+// Deployed everywhere: identity, catalog, inventory, order, billing, shipping,
+// notification, ops. Deployed to DEV only — never to int, qa or prod (see
+// deploy/compose.dev.yml and scripts/verify-clean-deployments.sh, which CI runs):
+// simulators, testkit, controller.
+['identity', 'catalog', 'inventory', 'order', 'billing', 'shipping', 'notification', 'ops',
+ 'simulators', 'testkit', 'controller'].each { name ->
+    // A service joins the build once it has source.
+    if (new File(rootDir, "services/${name}/src/main/resources/application.yml").exists()) {
+        include "services:${name}"
+    }
+}

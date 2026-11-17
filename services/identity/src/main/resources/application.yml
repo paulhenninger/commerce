@@ -1,6 +1,6 @@
 spring:
   application:
-    name: commerce
+    name: identity
 
   datasource:
     # connectionTimeZone/forceConnectionTimeZoneToSession pin the MySQL session to UTC
@@ -79,6 +79,9 @@ app:
     trust-forwarded-for: ${TRUST_FORWARDED_FOR:false}
     cors-origins: ${CORS_ORIGINS:http://localhost:5173}
     admin-requires-mfa: ${ADMIN_REQUIRES_MFA:true}
+    # The same rule for the other services' back-office and operations routes,
+    # which the edges check here (GET /internal/authz?require=admin).
+    ops-requires-mfa: ${OPS_REQUIRE_MFA:true}
     audit-retention-days: ${AUDIT_RETENTION_DAYS:180}
     max-request-bytes: ${MAX_REQUEST_BYTES:65536}
     # A base URL naming another host refuses development settings (http, the
@@ -139,6 +142,22 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+      environment: ${COMMERCE_ENV:dev}
+  otlp:
+    metrics:
+      export:
+        # Metrics are scraped by Prometheus; only traces go out over OTLP.
+        enabled: false
+  tracing:
+    sampling:
+      probability: ${TRACE_SAMPLING:1.0}
+  opentelemetry:
+    resource-attributes:
+      deployment.environment: ${COMMERCE_ENV:dev}
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
 
 logging:
   level:

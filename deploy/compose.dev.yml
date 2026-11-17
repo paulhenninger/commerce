@@ -1,0 +1,59 @@
+# DEV only. Everything in this file is test tooling: it is never part of an INT,
+# QA or PROD deployment (scripts/verify-clean-deployments.sh proves it in CI, and
+# each service refuses to start outside dev if it is pointed at any of this).
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "5"
+
+services:
+
+  # Local mail catcher — every email the system sends lands in the web UI at
+  # http://localhost:8025. Nothing leaves the machine.
+  mailpit:
+    <<: *hardened
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    user: "65534:65534"
+    networks: [mail, mail-ingress]
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+    tmpfs:
+      - /tmp:size=64m
+    mem_limit: 128m
+    pids_limit: 64
+
+  identity:
+    networks: [mail]
+    depends_on:
+      mailpit:
+        condition: service_started
+
+  # The lab's principals: testkit, testkit-chaos, intruder.
+  kafka-init:
+    environment:
+      INIT_DEV: "true"
+      KAFKA_PASSWORD_TESTKIT: ${KAFKA_PASSWORD_TESTKIT:?Set KAFKA_PASSWORD_TESTKIT}
+      KAFKA_PASSWORD_TESTKIT_CHAOS: ${KAFKA_PASSWORD_TESTKIT_CHAOS:?Set KAFKA_PASSWORD_TESTKIT_CHAOS}
+      KAFKA_PASSWORD_INTRUDER: ${KAFKA_PASSWORD_INTRUDER:?Set KAFKA_PASSWORD_INTRUDER}
+
+networks:
+  # Fixed ranges: see compose.yml.
+  # services ↔ mailpit
+  mail:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.20.0/24
+  mail-ingress:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.21.0/24

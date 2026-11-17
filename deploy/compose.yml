@@ -1,0 +1,365 @@
+# Commerce, everything that runs in every environment. Start it through
+# scripts/stack.sh, which adds the files and settings an environment needs:
+#
+#   scripts/stack.sh dev up -d --build --wait      →  http://localhost:8081
+#
+# compose.dev.yml adds the DEV-only tooling (mail catcher, simulators, testkit);
+# compose.ha.yml the replicas and extra brokers; compose.<env>.yml an
+# environment's own settings. Nothing DEV-only is defined in this file.
+#
+# Every container runs as an ordinary user, on a read-only filesystem, with every
+# Linux capability dropped, no way to gain more, and capped memory and process
+# counts. Each joins only the networks it needs (architecture, section 12):
+#
+#   browser ──▶ storefront-web ──(edge)──▶ identity, catalog, …
+#                                            ├──(data)────▶ mysql
+#                                            └──(events)──▶ kafka
+#
+# The edge cannot reach MySQL or Kafka. Only the edge publishes an application
+# port, and published ports are bound to this computer only.
+#
+# No password has a default here: every secret comes from the environment file
+# (deploy/env/<env>.env), and Compose refuses to start without it.
+
+# What every container gets: nothing written outside /tmp (memory only) and its
+# data volume, no Linux capabilities, no privilege escalation (setuid included),
+# and rotated logs (they hold email and IP addresses).
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "5"
+
+# A JVM service: built from services/Dockerfile, small and bounded.
+x-jvm: &jvm
+  <<: *hardened
+  tmpfs:
+    - /tmp:size=64m
+  mem_limit: 320m
+  pids_limit: 256
+
+# Settings every platform service shares.
+x-service-env: &service-env
+  COMMERCE_ENV: ${COMMERCE_ENV:?Set COMMERCE_ENV (dev, int, qa or prod)}
+  EDGE_SHARED_SECRET: ${EDGE_SHARED_SECRET:?Set EDGE_SHARED_SECRET}
+  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka-1:9092}
+  OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+  TRACE_SAMPLING: ${TRACE_SAMPLING:-1.0}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-mysql-image: &mysql-image
+  # The current LTS line. After 9.7, MySQL versions are dated Innovation
+  # releases (26.x) each supported only until the next; Dependabot is told to
+  # stay on 9.7 and CI checks this matches the tests' containers.
+  mysql:9.7.4@sha256:86b390ef642f89a0157d6215dee33ddc928b8b0ecab173117f56f6c40cb24eab
+
+x-kafka-image: &kafka-image
+  apache/kafka:4.4.0@sha256:833b867a9585a141da455dc2b57431c65cbccb27f11c91f694444cca9f777e0f
+
+x-kafka: &kafka
+  <<: *hardened
+  image: *kafka-image
+  entrypoint: ["/bin/bash", "/commerce/start.sh"]
+  networks: [events]
+  tmpfs:
+    - /tmp:size=64m
+  mem_limit: 512m
+  pids_limit: 512
+  healthcheck:
+    # The client listener accepts connections; kafka-init does the real check
+    # (an authenticated request) before anything depends on the cluster.
+    test: ["CMD", "bash", "-c", ": > /dev/tcp/127.0.0.1/9092"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+    start_period: 30s
+
+x-kafka-env: &kafka-env
+  CLUSTER_ID: ${KAFKA_CLUSTER_ID:-Q29tbWVyY2VLYWZrYUNsdXN0ZQ}
+  QUORUM_VOTERS: ${KAFKA_QUORUM_VOTERS:-1@kafka-1:9095}
+  REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:-1}
+  MIN_INSYNC_REPLICAS: ${KAFKA_MIN_INSYNC_REPLICAS:-1}
+  BROKER_PASSWORD: ${KAFKA_PASSWORD_BROKER:?Set KAFKA_PASSWORD_BROKER}
+  INIT_PASSWORD: ${KAFKA_PASSWORD_INIT:?Set KAFKA_PASSWORD_INIT}
+
+services:
+
+  # ----------------------------------------------------------------- database
+
+  mysql:
+    <<: *hardened
+    image: *mysql-image
+    # Runs as the mysql user from the start, so it needs no capability to switch.
+    user: mysql
+    command:
+      - --character-set-server=utf8mb4
+      # Every connection over the network is encrypted (with the certificate MySQL
+      # creates on first start), accounts are matched by address and never by a
+      # DNS name, the server reads no file a client names, and the X protocol port
+      # is closed.
+      - --require-secure-transport=ON
+      - --skip-name-resolve
+      - --local-infile=OFF
+      - --mysqlx=OFF
+      # Every service has a small bounded pool; this leaves headroom for all of
+      # them at two replicas each.
+      - --max-connections=400
+      - --innodb-buffer-pool-size=256M
+      # Not the 'sha256_password is deprecated' warning: for an unknown user (the healthcheck's
+      # ping) MySQL fakes a login with a plugin drawn at random, so names can't be probed. No account uses it.
+      - --log-error-suppression-list=MY-013360
+    environment:
+      # The administrator exists only for connections from inside this container
+      # (and mysql-init, through the shared socket): nothing on the network can
+      # sign in as root, even with the password.
+      MYSQL_ROOT_PASSWORD: ${DB_ADMIN_PASSWORD:?Set DB_ADMIN_PASSWORD}
+      MYSQL_ROOT_HOST: localhost
+    networks: [data]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - mysql-socket:/var/run/mysqld
+    tmpfs:
+      - /tmp:size=64m
+    mem_limit: 768m
+    pids_limit: 512
+    healthcheck:
+      # Over TCP, which MySQL opens only once first-start initialisation is done.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+
+  # Creates or repairs every database and its two logins (mysql/roles.sql), then
+  # exits: the owner that runs migrations, and the app login that can only read
+  # and write rows. Signs in as root over the socket that only it and the
+  # database share; it has no network at all.
+  mysql-init:
+    <<: *hardened
+    image: *mysql-image
+    user: mysql
+    restart: "no"
+    network_mode: none
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD:?Set DB_ADMIN_PASSWORD}
+      IDENTITY_DB_OWNER_PASSWORD: ${IDENTITY_DB_OWNER_PASSWORD:?Set IDENTITY_DB_OWNER_PASSWORD}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?Set IDENTITY_DB_PASSWORD}
+      CATALOG_DB_OWNER_PASSWORD: ${CATALOG_DB_OWNER_PASSWORD:?Set CATALOG_DB_OWNER_PASSWORD}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Set CATALOG_DB_PASSWORD}
+      ORDERS_DB_OWNER_PASSWORD: ${ORDERS_DB_OWNER_PASSWORD:?Set ORDERS_DB_OWNER_PASSWORD}
+      ORDERS_DB_PASSWORD: ${ORDERS_DB_PASSWORD:?Set ORDERS_DB_PASSWORD}
+      INVENTORY_DB_OWNER_PASSWORD: ${INVENTORY_DB_OWNER_PASSWORD:?Set INVENTORY_DB_OWNER_PASSWORD}
+      INVENTORY_DB_PASSWORD: ${INVENTORY_DB_PASSWORD:?Set INVENTORY_DB_PASSWORD}
+      BILLING_DB_OWNER_PASSWORD: ${BILLING_DB_OWNER_PASSWORD:?Set BILLING_DB_OWNER_PASSWORD}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD:?Set BILLING_DB_PASSWORD}
+      SHIPPING_DB_OWNER_PASSWORD: ${SHIPPING_DB_OWNER_PASSWORD:?Set SHIPPING_DB_OWNER_PASSWORD}
+      SHIPPING_DB_PASSWORD: ${SHIPPING_DB_PASSWORD:?Set SHIPPING_DB_PASSWORD}
+      NOTIFICATION_DB_OWNER_PASSWORD: ${NOTIFICATION_DB_OWNER_PASSWORD:?Set NOTIFICATION_DB_OWNER_PASSWORD}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD}
+      OPS_DB_OWNER_PASSWORD: ${OPS_DB_OWNER_PASSWORD:?Set OPS_DB_OWNER_PASSWORD}
+      OPS_DB_PASSWORD: ${OPS_DB_PASSWORD:?Set OPS_DB_PASSWORD}
+      EXPORTER_PASSWORD: ${DB_EXPORTER_PASSWORD:?Set DB_EXPORTER_PASSWORD}
+    volumes:
+      - mysql-socket:/var/run/mysqld
+      - ./mysql/roles.sql:/commerce/roles.sql:ro
+      - ./mysql/apply-roles.sh:/commerce/apply-roles.sh:ro
+    entrypoint: ["sh", "/commerce/apply-roles.sh"]
+    mem_limit: 128m
+    pids_limit: 32
+
+  # -------------------------------------------------------------------- kafka
+
+  kafka-1:
+    <<: *kafka
+    environment:
+      <<: *kafka-env
+      NODE_ID: 1
+      ADVERTISED_HOST: kafka-1
+    volumes:
+      - kafka-1-data:/var/lib/kafka/data
+      - ./kafka/start.sh:/commerce/start.sh:ro
+
+  # Creates the services' credentials, the topics and the access rules
+  # (kafka/init.sh), then exits. Everything event-driven waits for it.
+  kafka-init:
+    <<: *hardened
+    image: *kafka-image
+    restart: "no"
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+    networks: [events]
+    environment:
+      BOOTSTRAP: ${KAFKA_BOOTSTRAP_SERVERS:-kafka-1:9092}
+      REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:-1}
+      MIN_INSYNC_REPLICAS: ${KAFKA_MIN_INSYNC_REPLICAS:-1}
+      INIT_PASSWORD: ${KAFKA_PASSWORD_INIT:?Set KAFKA_PASSWORD_INIT}
+      KAFKA_PASSWORD_CATALOG: ${KAFKA_PASSWORD_CATALOG:?Set KAFKA_PASSWORD_CATALOG}
+      KAFKA_PASSWORD_ORDER: ${KAFKA_PASSWORD_ORDER:?Set KAFKA_PASSWORD_ORDER}
+      KAFKA_PASSWORD_INVENTORY: ${KAFKA_PASSWORD_INVENTORY:?Set KAFKA_PASSWORD_INVENTORY}
+      KAFKA_PASSWORD_BILLING: ${KAFKA_PASSWORD_BILLING:?Set KAFKA_PASSWORD_BILLING}
+      KAFKA_PASSWORD_SHIPPING: ${KAFKA_PASSWORD_SHIPPING:?Set KAFKA_PASSWORD_SHIPPING}
+      KAFKA_PASSWORD_NOTIFICATION: ${KAFKA_PASSWORD_NOTIFICATION:?Set KAFKA_PASSWORD_NOTIFICATION}
+      KAFKA_PASSWORD_OPS: ${KAFKA_PASSWORD_OPS:?Set KAFKA_PASSWORD_OPS}
+      KAFKA_HEAP_OPTS: -Xmx128m
+    volumes:
+      - ./kafka/init.sh:/commerce/init.sh:ro
+    entrypoint: ["/bin/bash", "/commerce/init.sh"]
+    tmpfs:
+      - /tmp:size=16m
+    mem_limit: 384m
+    pids_limit: 256
+
+  # ----------------------------------------------------------------- services
+
+  identity:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: identity
+    image: commerce-identity:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+    # outbound: the breached-password check, Turnstile and MX lookups.
+    networks: [edge, data, outbound, telemetry]
+    environment:
+      COMMERCE_ENV: ${COMMERCE_ENV:?Set COMMERCE_ENV (dev, int, qa or prod)}
+      DB_HOST: mysql
+      DB_NAME: identity
+      # Reads and writes rows, nothing else. Migrations run as the owner login,
+      # at startup only, over a connection that is closed straight after.
+      DB_USER: identity_app
+      DB_PASS: ${IDENTITY_DB_PASSWORD:?Set IDENTITY_DB_PASSWORD}
+      SPRING_FLYWAY_USER: identity_owner
+      SPRING_FLYWAY_PASSWORD: ${IDENTITY_DB_OWNER_PASSWORD:?Set IDENTITY_DB_OWNER_PASSWORD}
+      DB_PARAMS: "&sslMode=REQUIRED"
+      MAIL_HOST: ${MAIL_HOST:?Set MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      MAIL_STARTTLS: ${MAIL_STARTTLS:-true}
+      MAIL_FROM: ${MAIL_FROM:?Set MAIL_FROM}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (openssl rand -base64 32)}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Set DATA_ENCRYPTION_KEY (openssl rand -base64 32)}
+      APP_BASE_URL: ${APP_BASE_URL:?Set APP_BASE_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS:-${APP_BASE_URL}}
+      PASSKEY_EXTRA_ORIGINS: ${PASSKEY_EXTRA_ORIGINS:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      # The edges reset X-Forwarded-For, so identity may trust it.
+      TRUST_FORWARDED_FOR: "true"
+      SIGNUP_CHECK_MX: ${SIGNUP_CHECK_MX:-true}
+      ADMIN_REQUIRES_MFA: ${ADMIN_REQUIRES_MFA:-true}
+      OPS_REQUIRE_MFA: ${OPS_REQUIRE_MFA:-true}
+      OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+      TRACE_SAMPLING: ${TRACE_SAMPLING:-1.0}
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+    mem_limit: 448m
+
+  catalog:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: catalog
+    image: commerce-catalog:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [edge, data, events, telemetry]
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:mysql://mysql:3306/catalog?sslMode=REQUIRED
+      DB_USER: catalog_app
+      DB_PASSWORD: ${CATALOG_DB_PASSWORD:?Set CATALOG_DB_PASSWORD}
+      DB_OWNER_USER: catalog_owner
+      DB_OWNER_PASSWORD: ${CATALOG_DB_OWNER_PASSWORD:?Set CATALOG_DB_OWNER_PASSWORD}
+      KAFKA_USERNAME: catalog
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD_CATALOG:?Set KAFKA_PASSWORD_CATALOG}
+
+  # -------------------------------------------------------------------- edges
+
+  storefront-web:
+    <<: *hardened
+    build:
+      context: ../web/storefront
+      args:
+        API_RATE: ${EDGE_API_RATE:-50}
+        API_BURST: ${EDGE_API_BURST:-100}
+    image: commerce-storefront-web:${IMAGE_TAG:-local}
+    depends_on:
+      identity:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+    networks: [edge, storefront-ingress]
+    environment:
+      EDGE_SHARED_SECRET: ${EDGE_SHARED_SECRET:?Set EDGE_SHARED_SECRET}
+    ports:
+      - "127.0.0.1:${STOREFRONT_PORT:-8081}:8080"
+    tmpfs:
+      - /tmp:size=96m
+    mem_limit: 128m
+    pids_limit: 128
+
+networks:
+  # Each network has a fixed /24 inside COMMERCE_NET.0.0/16 (scripts/stack.sh sets a
+  # different /16 per environment), so the stack never depends on Docker's default
+  # address pool, which other projects on the same machine can exhaust.
+  #
+  # edges ↔ services
+  edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.1.0/24
+  # services ↔ mysql
+  data:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.2.0/24
+  # services ↔ kafka
+  events:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.3.0/24
+  # services ↔ the observability stack
+  telemetry:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.4.0/24
+  # The way out, for the few services that call real external systems.
+  outbound:
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.5.0/24
+  # These carry only published ports in. Docker needs a gateway to publish a
+  # port; with address translation off, nothing inside can use it to get out.
+  storefront-ingress:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.6.0/24
+
+volumes:
+  mysql-data:
+  mysql-socket:
+  kafka-1-data:

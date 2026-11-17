@@ -38,7 +38,7 @@ public class PlatformAutoConfiguration {
     }
 
     @Bean
-    FilterRegistrationBean<RequestContextFilter> requestContextFilter(ObjectProvider<Tracer> tracer) {
+    FilterRegistrationBean<RequestContextFilter> commerceRequestContextFilter(ObjectProvider<Tracer> tracer) {
         var registration = new FilterRegistrationBean<>(new RequestContextFilter(tracer));
         // After the tracing filter (which opens the span), before everything else.
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);

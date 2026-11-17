@@ -15,18 +15,21 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-16: **milestones 0 and 1 are complete**; milestone 2 is next.
+As of 2026-11-17: **milestones 0–2 are complete**; milestone 3 is next.
 
 | Area | State |
 |---|---|
 | `docs/`, `README.md`, `AGENTS.md` | Design written (this set of documents) |
 | Root Gradle build (`settings.gradle`, `build.gradle`, wrapper 9.8.2) | Working: `platform:core`, `platform:messaging` and `services:identity` compile |
-| `services/identity` | Bastion 2.1.0 copied and renamed (`commerce`, package `com.thirdstone.commerce.identity`), built in the multi-project build with the OpenTelemetry starter added. `./gradlew :services:identity:build` passes: 83 tests, none skipped (`MySqlMigrationTest` ran against real MySQL), SpotBugs ran. Two test-only edits: `MySqlMigrationTest` reads `deploy/mysql/roles.sql` (the file moved), and `application-test.yml` turns trace export off. No functional changes yet (5.3 is still to do) |
-| `web/storefront` | Bastion's frontend, renamed, otherwise untouched |
-| `platform/core` | Complete (5.1), 24 tests: codec and contract fixtures for all 19 event types, `TestToolingGuard`, edge-token check. Defaults are applied by `config.PlatformDefaults` (an `EnvironmentPostProcessor`), not by `spring.config.import` |
-| `platform/messaging` | Complete (5.2), 12 integration tests against MySQL 9.7 and Kafka 4.4 in Testcontainers |
-| `services/{catalog,inventory,order,billing,shipping,notification,ops,simulators,testkit}` | Empty source directories |
-| `deploy/mysql/` | Bastion's `roles.sql` and `apply-roles.sh` (single database; to be generalised) |
+| `services/identity` | Bastion 2.1.0 renamed (package `com.thirdstone.commerce.identity`, application name `identity`). Added (5.3): `gateway.GatewayAuthController` (`GET /internal/authz[?require=admin]`, refusal reason in `X-Auth-Error`), `ops-requires-mfa` setting, tracing and environment tag in `application.yml`. `./gradlew :services:identity:build`: 93 tests, none skipped. Test-only edits: `MySqlMigrationTest` reads `deploy/mysql/roles.sql` and expects the `<database>_app` login; `application-test.yml` turns trace export off |
+| `web/storefront` | Bastion's SPA unchanged. nginx edge per 5.12 for identity and catalog: `auth_request`, upstreams with `resolve`, catalog micro-cache, rate limits, JSON 401/403/503, `/internal` and `/actuator` refused. Further upstreams and routes go in `nginx/upstreams/*.conf` and `nginx/routes/*.conf` |
+| `platform/core` | Complete (5.1), 25 tests. Also `web.PageRequest`/`PageResponse`, `data.Ids` (ULID-style ids), `data.Sql` (UTC `DATETIME` ↔ `Instant`) |
+| `platform/messaging` | Complete (5.2), 12 integration tests. **Test fixtures** (`testFixtures`, used by every event-driven service): `CommerceContainers` (MySQL + Kafka with all topics, shared per JVM), `Edge` (requests as the edge forwards them), `EventBus` (publish events, await what a service announces) |
+| `services/catalog` | Complete (5.4), 7 integration tests |
+| `services/{inventory,order,billing,shipping,notification,ops,simulators,testkit,controller}` | Not started. A service joins the build (`settings.gradle`) once it has `src/main/resources/application.yml` |
+| `deploy/` | `compose.yml` (mysql, mysql-init, kafka-1, kafka-init, identity, catalog, storefront-web), `compose.dev.yml` (mailpit, dev Kafka principals), `env/dev.env.example`, `mysql/` (all databases and logins, exporter login), `kafka/start.sh` (SASL/ACL broker) and `kafka/init.sh` (credentials, topics, ACLs). No HA overlay, observability or other environments yet |
+| `scripts/` | `stack.sh` (generates `deploy/env/dev.env` with random secrets on first use), `smoke.sh` (18 checks: edge routing, sign-up via Mailpit, forged identity, Kafka access control) |
+| `services/Dockerfile` | One multi-stage file for every JVM service (`--build-arg SERVICE=…`); compiles once, readiness healthcheck |
 | `docs/identity/` | Bastion's docs, renamed; paths in them still assume Bastion's layout |
 | Root files | `LICENSE`, `SECURITY.md`, `.gitattributes`, `.gitleaks.toml`, `.trivyignore` from Bastion; `.gitignore`, `.dockerignore`. Git repository initialised on `main` |
 | Everything else in section 2 | Not started |
@@ -204,6 +207,23 @@ its own — include the security-headers snippet per location, as Bastion does.
 - `DeploymentSafetyCheck` refuses dev passwords and `http://` when
   `APP_BASE_URL` is not localhost.
 - `MySqlMigrationTest` and `StructuredLoggingTest` (own JVM) must keep passing.
+
+**Docker networks** have fixed subnets (`${COMMERCE_NET}.<n>.0/24`;
+`stack.sh` sets `COMMERCE_NET` to 10.77 for dev, 10.78 int, 10.79 qa, 10.80
+prod). Docker's default address pool was exhausted on this machine by other
+projects, and a stack of 15 networks should not depend on it. A new network
+takes the next free `<n>`: 1–6 in `compose.yml`, 20–21 in `compose.dev.yml`.
+
+**Git Bash on Windows**: it rewrites arguments that look like paths (`/opt/…`)
+when calling Windows programs such as `docker`. `smoke.sh` sets
+`MSYS_NO_PATHCONV=1`; `stack.sh` converts its own paths with `cygpath -m`, so
+it works either way.
+
+**nginx**: an `upstream` zone and a `proxy_cache_path` `keys_zone` share one
+namespace — name cache zones `<name>_cache`.
+
+**Spring bean names**: Boot already defines `requestContextFilter`; platform
+beans use a `commerce` prefix where a clash is possible.
 
 **This machine**: Windows 11, Docker Desktop with 8 GB and 22 CPUs, JDK 25,
 Node 22 locally (images build on Node 26). Shell scripts must be LF
