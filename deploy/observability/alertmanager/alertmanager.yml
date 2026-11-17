@@ -1,0 +1,23 @@
+# Every alert is recorded as an incident by the ops service (its webhook is
+# reachable on the telemetry network only). Environments that page people use
+# their own file with extra receivers (alertmanager.dev.yml sends to Mailpit).
+route:
+  receiver: ops
+  group_by: [alertname, service]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+
+receivers:
+  - name: ops
+    webhook_configs:
+      - url: http://ops:8080/internal/alerts
+        send_resolved: true
+
+# A service that is down makes its other alerts noise.
+inhibit_rules:
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [alertname=~"ServiceReplicaDown|ConsumerLagHigh|ApiLatencyBurn.*|ContainerRestarting"]
+    equal: [service]
+  - source_matchers: [alertname="MySqlDown"]
+    target_matchers: [alertname=~"DbPoolSaturated|OutboxBacklog"]

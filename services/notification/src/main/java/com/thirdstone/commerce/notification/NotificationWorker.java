@@ -2,6 +2,8 @@ package com.thirdstone.commerce.notification;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import com.thirdstone.commerce.platform.messaging.TraceContinuation;
+import io.micrometer.core.instrument.Gauge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.mail.MailException;
@@ -32,9 +34,14 @@ class NotificationWorker {
     private final MailProperties props;
     private final MeterRegistry registry;
     private final TransactionTemplate tx;
+    private final TraceContinuation traces;
+    private final java.util.concurrent.atomic.AtomicLong oldestPending = new java.util.concurrent.atomic.AtomicLong();
 
     NotificationWorker(NotificationRepository notifications, JavaMailSender mail, MailProperties props,
-                       MeterRegistry registry, PlatformTransactionManager transactions) {
+                       MeterRegistry registry, PlatformTransactionManager transactions, TraceContinuation traces) {
+        this.traces = traces;
+        Gauge.builder("commerce.notifications.oldest.pending.age", oldestPending,
+                java.util.concurrent.atomic.AtomicLong::get).baseUnit("seconds").register(registry);
         this.notifications = notifications;
         this.mail = mail;
         this.props = props;
@@ -49,8 +56,17 @@ class NotificationWorker {
             return;
         }
         for (long id : due) {
-            notifications.pending(id).ifPresent(this::send);
+            // The send joins the trace of the event that asked for it.
+            notifications.pending(id).ifPresent(n -> traces.inSpan(n.traceparent(), "send email " + n.template(), () -> {
+                send(n);
+                return null;
+            }));
         }
+    }
+
+    @Scheduled(fixedDelay = 15000)
+    void measure() {
+        oldestPending.set(notifications.oldestPendingAgeSeconds());
     }
 
     private void send(NotificationRepository.Pending n) {

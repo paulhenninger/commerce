@@ -2,8 +2,6 @@ package com.thirdstone.commerce.platform.messaging;
 
 import com.thirdstone.commerce.platform.events.EventCodec;
 import com.thirdstone.commerce.platform.events.EventEnvelope;
-import io.micrometer.tracing.Span;
-import io.micrometer.tracing.TraceContext;
 import io.micrometer.tracing.Tracer;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -69,16 +67,6 @@ public class Outbox {
 
     /** The W3C trace context of whatever caused this event, so the trace continues in its consumers. */
     private String traceparent() {
-        Tracer t = tracer.getIfAvailable();
-        Span span = t == null ? null : t.currentSpan();
-        if (span == null) {
-            return null;
-        }
-        TraceContext context = span.context();
-        if (context.traceId() == null || context.traceId().length() != 32 || context.spanId() == null) {
-            return null;
-        }
-        return "00-" + context.traceId() + "-" + context.spanId()
-                + (Boolean.FALSE.equals(context.sampled()) ? "-00" : "-01");
+        return TraceContinuation.current(tracer.getIfAvailable());
     }
 }

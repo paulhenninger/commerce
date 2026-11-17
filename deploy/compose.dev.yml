@@ -76,6 +76,20 @@ services:
       mailpit:
         condition: service_started
 
+  # DEV: alerts are also emailed to Mailpit, and Prometheus and Alertmanager
+  # are published on loopback for exploration.
+  alertmanager:
+    networks: [mail, tools-ingress]
+    volumes:
+      - ./observability/alertmanager/alertmanager.dev.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+
+  prometheus:
+    networks: [tools-ingress]
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
   # The lab's principals: testkit, testkit-chaos, intruder.
   kafka-init:
     environment:
@@ -92,6 +106,12 @@ networks:
     ipam:
       config:
         - subnet: ${COMMERCE_NET:-10.77}.22.0/24
+  tools-ingress:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.24.0/24
   simulators-ingress:
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "false"

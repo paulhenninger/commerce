@@ -50,11 +50,12 @@ public class PaymentGatewayClient {
     private final CircuitBreaker breaker;
     private final MeterRegistry registry;
 
-    public PaymentGatewayClient(PaymentProperties props, MeterRegistry registry) {
+    public PaymentGatewayClient(PaymentProperties props, MeterRegistry registry, RestClient.Builder builder) {
         HttpClient http = HttpClient.newBuilder().connectTimeout(props.connectTimeout()).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(props.readTimeout());
-        this.rest = RestClient.builder().baseUrl(props.gatewayUrl()).requestFactory(factory)
+        // Boot's builder: calls are timed and traced like every other request.
+        this.rest = builder.clone().baseUrl(props.gatewayUrl()).requestFactory(factory)
                 .defaultHeader("Authorization", "Bearer " + props.apiKey()).build();
         CircuitBreakerRegistry breakers = CircuitBreakerRegistry.of(CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)

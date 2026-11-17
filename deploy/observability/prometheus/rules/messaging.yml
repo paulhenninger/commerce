@@ -1,0 +1,62 @@
+# Kafka, the outbox and dead letters.
+groups:
+  - name: messaging
+    rules:
+      - alert: OutboxBacklog
+        expr: max by (service) (commerce_outbox_oldest_age_seconds) > 30
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.service }} cannot publish its events"
+          description: "The oldest unpublished event is {{ $value | humanizeDuration }} old: sagas are paused."
+          runbook_url: docs/operations.md#runbook-outbox-backlog
+      - alert: DeadLettersArriving
+        expr: sum by (service, topic) (increase(commerce_events_dead_lettered_total[5m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} is dead-lettering records from {{ $labels.topic }}"
+          description: "{{ $value }} records in 5 minutes could not be processed."
+          runbook_url: docs/operations.md#runbook-dead-letters
+      - alert: DeadLetterFlood
+        expr: sum by (topic) (increase(commerce_events_dead_lettered_total[5m])) > 100
+        labels: {severity: critical}
+        annotations:
+          summary: "A flood of bad records on {{ $labels.topic }}"
+          description: "{{ $value }} records dead-lettered in 5 minutes."
+          runbook_url: docs/operations.md#runbook-dead-letters
+      # The rules below use the commerce_kafka_* gauges the ops service exports.
+      - alert: ConsumerLagHigh
+        expr: |
+          max by (group, topic) (commerce_kafka_consumer_lag) > 1000
+          or (max by (group, topic) (commerce_kafka_consumer_lag) > 100
+              and max by (group, topic) (deriv(commerce_kafka_consumer_lag[10m])) > 0)
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Consumer group {{ $labels.group }} is falling behind on {{ $labels.topic }}"
+          description: "Lag is {{ $value }}."
+          runbook_url: docs/operations.md#runbook-consumer-lag
+      - alert: KafkaBrokerDown
+        expr: max(commerce_kafka_brokers) < max_over_time(max(commerce_kafka_brokers)[1h:1m])
+        for: 1m
+        labels: {severity: warning, service: kafka}
+        annotations:
+          summary: A Kafka broker is down
+          description: "{{ $value }} brokers online, fewer than earlier."
+          runbook_url: docs/operations.md#runbook-kafka
+      - alert: KafkaUnderReplicated
+        expr: max(commerce_kafka_under_replicated_partitions) > 0
+        for: 5m
+        labels: {severity: warning, service: kafka}
+        annotations:
+          summary: Kafka partitions are under-replicated
+          description: "{{ $value }} partitions have fewer in-sync copies than they should."
+          runbook_url: docs/operations.md#runbook-kafka
+      - alert: ContractViolations
+        # DEV: exported by the testkit's contract tap.
+        expr: sum by (topic, type) (increase(commerce_contract_violations_total{producer="real"}[5m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "A real service wrote an invalid {{ $labels.type }} to {{ $labels.topic }}"
+          description: The event does not satisfy its contract.
+          runbook_url: docs/operations.md#runbook-dead-letters

@@ -1,0 +1,93 @@
+# Is everything there and healthy? See docs/operations.md, section 3, for the
+# meaning of each alert and section 6 for what to do about it.
+groups:
+  - name: services
+    rules:
+      # One rule per deployed service: absent() can only alert on series that
+      # are missing, and it cannot know which services should exist.
+      - &service-down
+        alert: ServiceDown
+        expr: absent(up{job="services", service="identity"} == 1)
+        for: 1m
+        labels: {severity: critical, service: identity}
+        annotations: &service-down-annotations
+          summary: "{{ $labels.service }} has no healthy instance"
+          description: "Prometheus has not scraped a healthy instance of {{ $labels.service }} for a minute."
+          runbook_url: docs/operations.md#runbook-service-down
+      - <<: *service-down
+        expr: absent(up{job="services", service="catalog"} == 1)
+        labels: {severity: critical, service: catalog}
+      - <<: *service-down
+        expr: absent(up{job="services", service="inventory"} == 1)
+        labels: {severity: critical, service: inventory}
+      - <<: *service-down
+        expr: absent(up{job="services", service="order"} == 1)
+        labels: {severity: critical, service: order}
+      - <<: *service-down
+        expr: absent(up{job="services", service="billing"} == 1)
+        labels: {severity: critical, service: billing}
+      - <<: *service-down
+        expr: absent(up{job="services", service="shipping"} == 1)
+        labels: {severity: critical, service: shipping}
+      - <<: *service-down
+        expr: absent(up{job="services", service="notification"} == 1)
+        labels: {severity: critical, service: notification}
+
+      - alert: ServiceReplicaDown
+        # Fewer healthy instances than this service has had in the last hour.
+        expr: |
+          count by (service) (up{job="services"} == 1)
+            < max_over_time(count by (service) (up{job="services"})[1h:1m])
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} is running fewer instances than usual"
+          description: "{{ $value }} healthy instances of {{ $labels.service }}, fewer than earlier in the hour."
+          runbook_url: docs/operations.md#runbook-service-down
+
+      - alert: ContainerRestarting
+        expr: changes(process_start_time_seconds{job="services"}[10m]) > 2
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} ({{ $labels.instance }}) keeps restarting"
+          description: "Restarted {{ $value }} times in 10 minutes."
+          runbook_url: docs/operations.md#runbook-service-down
+
+      - alert: JvmMemoryHigh
+        expr: |
+          sum by (service, instance) (jvm_memory_used_bytes{area="heap"})
+            / sum by (service, instance) (jvm_memory_max_bytes{area="heap"} > 0) > 0.9
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} ({{ $labels.instance }}) heap above 90%"
+          description: "Heap use is {{ $value | humanizePercentage }}."
+          runbook_url: docs/operations.md#runbook-saturation
+
+      - alert: DbPoolSaturated
+        expr: max by (service) (hikaricp_connections_pending) > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} is waiting for database connections"
+          description: "Requests are queueing for a connection from the pool."
+          runbook_url: docs/operations.md#runbook-database
+
+  - name: mysql
+    rules:
+      - alert: MySqlDown
+        expr: mysql_up == 0 or absent(mysql_up)
+        for: 1m
+        labels: {severity: critical, service: mysql}
+        annotations:
+          summary: MySQL is unreachable
+          description: The exporter cannot connect to MySQL.
+          runbook_url: docs/operations.md#runbook-database
+      - alert: MySqlConnectionsHigh
+        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+        for: 5m
+        labels: {severity: warning, service: mysql}
+        annotations:
+          summary: MySQL connections above 80% of the maximum
+          description: "{{ $value | humanizePercentage }} of max_connections in use."
+          runbook_url: docs/operations.md#runbook-database

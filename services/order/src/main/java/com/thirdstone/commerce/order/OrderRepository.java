@@ -177,6 +177,13 @@ class OrderRepository {
                 .param("statuses", OrderStatus.IN_FLIGHT).query(Long.class).single();
     }
 
+    long oldestInFlightAgeSeconds() {
+        Long age = jdbc.sql("SELECT TIMESTAMPDIFF(SECOND, MIN(created_at), UTC_TIMESTAMP(6)) FROM orders "
+                        + "WHERE status IN (:statuses)")
+                .param("statuses", OrderStatus.IN_FLIGHT).query(Long.class).optional().orElse(null);
+        return age == null ? 0 : age;
+    }
+
     Map<String, Long> countByStatus() {
         Map<String, Long> counts = new HashMap<>();
         jdbc.sql("SELECT status, COUNT(*) FROM orders GROUP BY status")

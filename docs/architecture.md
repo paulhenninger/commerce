@@ -554,6 +554,13 @@ flowchart LR
 
 ### Traces
 
+- Work started later by a worker continues the trace that asked for it: the
+  outbox relay sets the stored `traceparent` on the record, and the notification
+  worker sends each email in a span whose parent is the event that queued it. So a
+  trace runs from the click to the email; `scripts/verify-observability.py` checks
+  that one does. Scheduled polls themselves create no spans
+  (`management.observations.enable.tasks.scheduled=false`): one per poll every few
+  seconds would bury everything else.
 - OpenTelemetry via Spring Boot's starter; W3C `traceparent` propagation; spans
   for HTTP server and client calls, JDBC is not traced, Kafka listener
   invocations, and the outbox relay's publish.

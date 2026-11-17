@@ -63,6 +63,12 @@ public class MessagingAutoConfiguration {
     }
 
     @Bean
+    TraceContinuation traceContinuation(ObjectProvider<Tracer> tracer,
+                                        ObjectProvider<io.micrometer.tracing.propagation.Propagator> propagator) {
+        return new TraceContinuation(tracer, propagator);
+    }
+
+    @Bean
     ProcessedEventsPurge processedEventsPurge(JdbcClient jdbc) {
         return new ProcessedEventsPurge(jdbc);
     }

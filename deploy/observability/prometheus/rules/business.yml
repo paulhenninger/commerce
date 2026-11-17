@@ -1,0 +1,60 @@
+# The order flow, external dependencies and email.
+groups:
+  - name: business
+    rules:
+      - alert: OrdersStuck
+        # Twice the saga timeout (2 min): the timeout itself should have cancelled them.
+        expr: max(commerce_orders_oldest_in_flight_age_seconds) > 240
+        for: 1m
+        labels: {severity: critical, service: order}
+        annotations:
+          summary: Orders are stuck waiting for stock or payment
+          description: "The oldest order in flight is {{ $value | humanizeDuration }} old."
+          runbook_url: docs/operations.md#runbook-stuck-orders
+      - alert: OrderCancellationSpike
+        expr: |
+          sum(increase(commerce_orders_total{outcome="cancelled"}[10m]))
+            / sum(increase(commerce_orders_total{outcome="placed"}[10m])) > 0.3
+          and sum(increase(commerce_orders_total{outcome="placed"}[10m])) > 10
+        labels: {severity: warning, service: order}
+        annotations:
+          summary: More than 30% of orders are being cancelled
+          description: "{{ $value | humanizePercentage }} of orders placed in 10 minutes were cancelled."
+          runbook_url: docs/operations.md#runbook-cancellation-spike
+      - alert: CircuitBreakerOpen
+        expr: max by (service, name) (resilience4j_circuitbreaker_state{state="open"}) == 1
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "The {{ $labels.name }} circuit breaker in {{ $labels.service }} is open"
+          description: Calls to the external system are being refused to protect it and us.
+          runbook_url: docs/operations.md#runbook-external-dependency-down
+      - alert: PaymentFailuresHigh
+        expr: |
+          sum(increase(commerce_payments_total{outcome=~"PAYMENT_.*|EXPIRED"}[10m]))
+            / sum(increase(commerce_payments_total{outcome!="refunded"}[10m])) > 0.2
+          and sum(increase(commerce_payments_total{outcome!="refunded"}[10m])) > 5
+        labels: {severity: warning, service: billing}
+        annotations:
+          summary: More than 20% of payments are failing
+          description: "{{ $value | humanizePercentage }} of payment attempts failed in 10 minutes."
+          runbook_url: docs/operations.md#runbook-external-dependency-down
+      - alert: NotificationsFailing
+        expr: |
+          sum(increase(commerce_notifications_total{outcome="failed"}[15m])) > 0
+          or max(commerce_notifications_oldest_pending_age_seconds) > 900
+        labels: {severity: warning, service: notification}
+        annotations:
+          summary: Customer emails are not going out
+          description: Emails have been given up, or have waited more than 15 minutes.
+          runbook_url: docs/operations.md#runbook-email-not-sending
+      - alert: AuthFailuresSpike
+        expr: |
+          sum(rate(commerce_security_events_total{type=~"LOGIN_FAILED|ACCOUNT_LOCKED.*"}[10m]))
+            > 5 * sum(rate(commerce_security_events_total{type=~"LOGIN_FAILED|ACCOUNT_LOCKED.*"}[6h] offset 10m)) + 0.1
+        for: 5m
+        labels: {severity: warning, service: identity}
+        annotations:
+          summary: Sign-in failures far above normal
+          description: Possible credential stuffing or a broken client.
+          runbook_url: docs/identity/operations.md

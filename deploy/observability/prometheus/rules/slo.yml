@@ -1,0 +1,113 @@
+# Service level objectives (docs/operations.md, section 2), alerted on burn rate:
+# how fast the error budget is being spent, over a short and a long window, so a
+# brief blip does not page and a slow leak is still caught.
+groups:
+  - name: slo-recording
+    rules:
+      - record: commerce:api_error_ratio:rate5m
+        expr: |
+          sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order", status=~"5.."}[5m]))
+            / sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order"}[5m]))
+      - record: commerce:api_error_ratio:rate30m
+        expr: |
+          sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order", status=~"5.."}[30m]))
+            / sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order"}[30m]))
+      - record: commerce:api_error_ratio:rate1h
+        expr: |
+          sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order", status=~"5.."}[1h]))
+            / sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order"}[1h]))
+      - record: commerce:api_error_ratio:rate6h
+        expr: |
+          sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order", status=~"5.."}[6h]))
+            / sum by (service) (rate(http_server_requests_seconds_count{job="services", service=~"identity|catalog|order"}[6h]))
+      # Share of requests slower than the objective: catalog reads 250 ms, checkout 500 ms.
+      - record: commerce:api_slow_ratio:rate5m
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="catalog", uri=~"/api/v1/catalog/.*", le="0.25"}[5m]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="catalog", uri=~"/api/v1/catalog/.*"}[5m]))
+          )
+          or
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="order", method="POST", uri="/api/v1/orders", le="0.5"}[5m]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="order", method="POST", uri="/api/v1/orders"}[5m]))
+          )
+      - record: commerce:api_slow_ratio:rate1h
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="catalog", uri=~"/api/v1/catalog/.*", le="0.25"}[1h]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="catalog", uri=~"/api/v1/catalog/.*"}[1h]))
+          )
+          or
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="order", method="POST", uri="/api/v1/orders", le="0.5"}[1h]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="order", method="POST", uri="/api/v1/orders"}[1h]))
+          )
+      - record: commerce:api_slow_ratio:rate30m
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="catalog", uri=~"/api/v1/catalog/.*", le="0.25"}[30m]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="catalog", uri=~"/api/v1/catalog/.*"}[30m]))
+          )
+          or
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="order", method="POST", uri="/api/v1/orders", le="0.5"}[30m]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="order", method="POST", uri="/api/v1/orders"}[30m]))
+          )
+      - record: commerce:api_slow_ratio:rate6h
+        expr: |
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="catalog", uri=~"/api/v1/catalog/.*", le="0.25"}[6h]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="catalog", uri=~"/api/v1/catalog/.*"}[6h]))
+          )
+          or
+          1 - (
+            sum by (service) (rate(http_server_requests_seconds_bucket{service="order", method="POST", uri="/api/v1/orders", le="0.5"}[6h]))
+              / sum by (service) (rate(http_server_requests_seconds_count{service="order", method="POST", uri="/api/v1/orders"}[6h]))
+          )
+
+  - name: slo-alerts
+    rules:
+      # 99.9% available: budget 0.1%. 14.4x spends 2% of a 30-day budget in an hour.
+      - alert: ApiAvailabilityBurnFast
+        expr: commerce:api_error_ratio:rate5m > 14.4 * 0.001 and commerce:api_error_ratio:rate1h > 14.4 * 0.001
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.service }} is failing requests fast enough to exhaust its error budget"
+          description: "{{ $value | humanizePercentage }} of requests failing over 5 minutes."
+          runbook_url: docs/operations.md#runbook-elevated-5xx
+      - alert: ApiAvailabilityBurnSlow
+        expr: commerce:api_error_ratio:rate30m > 6 * 0.001 and commerce:api_error_ratio:rate6h > 6 * 0.001
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} is steadily failing requests"
+          description: "{{ $value | humanizePercentage }} of requests failing over 30 minutes."
+          runbook_url: docs/operations.md#runbook-elevated-5xx
+      # 99% within the objective: budget 1%.
+      - alert: ApiLatencyBurnFast
+        expr: commerce:api_slow_ratio:rate5m > 14.4 * 0.01 and commerce:api_slow_ratio:rate1h > 14.4 * 0.01
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.service }} is too slow"
+          description: "{{ $value | humanizePercentage }} of requests slower than the objective over 5 minutes."
+          runbook_url: docs/operations.md#runbook-high-latency
+      - alert: ApiLatencyBurnSlow
+        expr: commerce:api_slow_ratio:rate30m > 6 * 0.01 and commerce:api_slow_ratio:rate6h > 6 * 0.01
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.service }} is steadily slower than its objective"
+          description: "{{ $value | humanizePercentage }} of requests too slow over 30 minutes."
+          runbook_url: docs/operations.md#runbook-high-latency
+      - alert: SiteProbeFailing
+        # commerce_probe_success is exported by the ops service.
+        expr: min by (target) (commerce_probe_success) == 0
+        for: 1m
+        labels: {severity: critical, service: edge}
+        annotations:
+          summary: "{{ $labels.target }} is unreachable"
+          description: The synthetic probe of the edge fails.
+          runbook_url: docs/operations.md#runbook-site-unreachable
