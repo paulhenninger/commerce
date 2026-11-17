@@ -1,0 +1,4 @@
+dependencies {
+    // The in-process layer of the three-level read cache (browser, edge, here).
+    implementation 'com.github.ben-manes.caffeine:caffeine'
+}

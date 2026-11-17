@@ -53,7 +53,10 @@ configure(subprojects.findAll { it.path.count(':') == 2 }) {
 
 // The services other than identity (which keeps its own, fuller build file) are
 // plain Boot applications on the platform libraries.
-def platformServices = ['catalog', 'inventory', 'order', 'billing', 'shipping', 'notification', 'ops', 'simulators', 'testkit']
+def platformServices = ['catalog', 'inventory', 'order', 'billing', 'shipping', 'notification', 'ops', 'simulators', 'testkit', 'controller']
+// Those with a database and Kafka: they get the outbox, the idempotent
+// dispatcher, and integration tests against real MySQL and Kafka.
+def eventServices = ['catalog', 'inventory', 'order', 'billing', 'shipping', 'notification', 'ops']
 configure(subprojects.findAll { it.parent?.name == 'services' && it.name in platformServices }) {
     apply plugin: 'org.springframework.boot'
 
@@ -68,5 +71,12 @@ configure(subprojects.findAll { it.parent?.name == 'services' && it.name in plat
     }
     tasks.named('jar') {
         enabled = false
+    }
+}
+
+configure(subprojects.findAll { it.parent?.name == 'services' && it.name in eventServices }) {
+    dependencies {
+        implementation project(':platform:messaging')
+        testImplementation testFixtures(project(':platform:messaging'))
     }
 }

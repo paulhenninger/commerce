@@ -62,6 +62,11 @@ public record AppProperties(
             @DefaultValue("http://localhost:5173") List<String> corsOrigins,
             /** Admin API requires a session that signed in with a second factor or a passkey. */
             @DefaultValue("true") boolean adminRequiresMfa,
+            /**
+             * Back-office and operations routes of the other services, as answered to
+             * the edge by GatewayAuthController: administrators need a two-factor session.
+             */
+            @DefaultValue("true") boolean opsRequiresMfa,
             /** Turn off only in tests: every rate limiter and attempt budget. */
             @DefaultValue("true") boolean rateLimitsEnabled,
             /** Security-event rows older than this are purged nightly. */

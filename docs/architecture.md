@@ -815,7 +815,10 @@ secrets; Compose refuses to start without them (`${VAR:?}`).
 
 ### Networks
 
-Every network is `internal` (no route out) unless noted. A container joins only
+Every network is `internal` (no route out) unless noted, and has a fixed /24
+inside a private /16 chosen per environment (10.77 dev, 10.78 int, 10.79 qa,
+10.80 prod), so the stack never depends on Docker's default address pool and
+environments sharing a host never overlap. A container joins only
 the ones it needs.
 
 | Network | Members | Purpose |
