@@ -1,0 +1,23 @@
+spring:
+  application:
+    name: testkit
+
+commerce:
+  edge:
+    # Reached only by the ops service on the control network; it is a test tool,
+    # not part of the shop.
+    required: false
+  testkit:
+    storefront-url: ${STOREFRONT_URL:http://storefront-web:8080}
+    mailpit-url: ${MAILPIT_URL:http://mailpit:8025}
+    simulators-url: ${SIMULATORS_URL:http://simulators:8080}
+    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:admin@example.com}
+    admin-password: ${DEV_ADMIN_PASSWORD:}
+    shopper-password: ${DEV_SHOPPER_PASSWORD:}
+    kafka:
+      bootstrap: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_PLAINTEXT}
+      reader-password: ${KAFKA_PASSWORD_TESTKIT:}
+      chaos-password: ${KAFKA_PASSWORD_TESTKIT_CHAOS:}
+      intruder-password: ${KAFKA_PASSWORD_INTRUDER:}
+    shoppers-at-start: ${TESTKIT_SHOPPERS:0}

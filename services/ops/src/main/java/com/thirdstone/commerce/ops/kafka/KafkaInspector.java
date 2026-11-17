@@ -134,7 +134,17 @@ public class KafkaInspector implements DisposableBean {
 
     private List<GroupInfo> groups(Map<TopicPartition, Long> end) throws Exception {
         List<GroupInfo> groups = new ArrayList<>();
-        for (String group : props.consumerGroups()) {
+        // The services' groups always (even before they exist), then any other
+        // group found on the cluster (the chaos lab's, say), so a misbehaving
+        // consumer shows up with its own lag. Ops's own readers use no group.
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>(props.consumerGroups());
+        try {
+            admin.listGroups().all().get(TIMEOUT.toSeconds(), TimeUnit.SECONDS).stream()
+                    .map(org.apache.kafka.clients.admin.GroupListing::groupId).sorted().forEach(names::add);
+        } catch (java.util.concurrent.ExecutionException e) {
+            // Listing needs Describe on the groups; without it, the known groups still show.
+        }
+        for (String group : names) {
             // One group at a time: a group that does not exist yet (its service
             // never started) must not hide the others.
             Map<String, ConsumerGroupDescription> described;

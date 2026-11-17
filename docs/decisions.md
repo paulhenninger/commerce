@@ -580,3 +580,27 @@ notification, and the testkit must record everything it does.
 **Rejected.** Dashboards only — evidence, not proof. An external chaos tool
 (Chaos Mesh, Gremlin, Pumba) — built for Kubernetes or lacking the
 business-level audit that makes the verdict meaningful.
+
+## ADR-029: Bounded password hashing in identity
+
+**Context.** Found at milestone 7: twenty simulated shoppers signing up at once
+crashed identity with `OutOfMemoryError`. Each Argon2id hash or check takes
+about 19 MiB of heap, and nothing limited how many ran together — so anyone
+able to send concurrent sign-in or sign-up requests could take identity, and with
+it every authenticated request in the shop, down.
+
+**Decision.** Identity's `PasswordEncoder` is wrapped in `BoundedPasswordEncoder`:
+at most `MAX_CONCURRENT_HASHES` (default 4) hashes run at once; further requests
+wait up to 10 s for a slot and then get `503 BUSY`. Argon2's parameters, and so
+the cost of each guess for an attacker, are unchanged. Identity's container
+limit is raised from 448 to 640 MiB, which the same load showed it needs.
+
+**Consequences.** Memory for hashing is bounded at about 76 MiB. A burst of
+sign-ins queues instead of crashing the service; past ten seconds it is told to
+retry. A queued request holds its database connection while it waits (Bastion
+checks the password inside its transaction), so the bound is kept small
+relative to the pool (20). This is an additive change to Bastion: no control is
+weakened, and its test suite passes unchanged (plus two tests for the bound).
+
+**Rejected.** Cheaper Argon2 parameters — weakens stored passwords. Relying on
+the edge's per-IP limits — a distributed burst passes them.

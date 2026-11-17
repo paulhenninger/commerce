@@ -1,5 +1,6 @@
 package com.thirdstone.commerce.identity.config;
 
+import com.thirdstone.commerce.identity.security.BoundedPasswordEncoder;
 import com.thirdstone.commerce.identity.security.ClientInfo;
 import com.thirdstone.commerce.identity.security.JwtAuthFilter;
 import com.thirdstone.commerce.identity.security.RateLimitFilter;
@@ -127,7 +128,8 @@ public class SecurityConfig {
                 "bcrypt", bcrypt));
         // Rows written by Commerce 1.x are bare BCrypt with no prefix.
         encoder.setDefaultPasswordEncoderForMatches(bcrypt);
-        return encoder;
+        // A few hashes at a time, so a burst of sign-ins cannot exhaust the heap.
+        return new BoundedPasswordEncoder(encoder, props.security().maxConcurrentHashes(), 10_000);
     }
 
     // These filters run inside the security chain (above). As @Components, Boot would

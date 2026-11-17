@@ -1,0 +1,6 @@
+dependencies {
+    // Raw clients: the problem actors need full control over what they send.
+    implementation 'org.apache.kafka:kafka-clients'
+    implementation 'org.springframework.boot:spring-boot-starter-restclient'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+}

@@ -3,6 +3,8 @@ import { useAuth } from './auth/AuthContext';
 import { Rail } from './components/Rail';
 import { OpsConfigProvider, useOpsConfig } from './components/OpsConfig';
 import BusinessPage from './pages/BusinessPage';
+import ChaosPage from './pages/ChaosPage';
+import SimulatorPage from './pages/SimulatorPage';
 import IncidentsPage from './pages/IncidentsPage';
 import KafkaPage from './pages/KafkaPage';
 import LoginPage from './pages/LoginPage';
@@ -67,6 +69,8 @@ function Console() {
           <Route path="/business" element={<BusinessPage />} />
           <Route path="/incidents" element={<IncidentsPage />} />
           <Route path="/incidents/:id" element={<IncidentsPage />} />
+          {config.testkit && <Route path="/simulator" element={<SimulatorPage />} />}
+          {config.testkit && <Route path="/chaos" element={<ChaosPage />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
