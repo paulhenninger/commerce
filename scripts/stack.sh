@@ -60,6 +60,8 @@ if [ ! -f "$env_file" ]; then
   fi
   umask 077
   while IFS= read -r line || [ -n "$line" ]; do
+    # A Windows checkout may give the example CRLF endings.
+    line="${line%$'\r'}"
     generated "$line"
   done < "$deploy/env/dev.env.example" > "$env_file"
   echo "stack: created $env_file with generated secrets" >&2
@@ -67,6 +69,8 @@ elif [ "$env" = dev ]; then
   # Settings added to the example since this file was made: append them, so an
   # existing DEV setup (and its data) keeps working after a pull.
   while IFS= read -r line || [ -n "$line" ]; do
+    # A Windows checkout may give the example CRLF endings.
+    line="${line%$'\r'}"
     case "$line" in ''|'#'*) continue ;; esac
     if ! grep -q "^${line%%=*}=" "$env_file"; then
       generated "$line" >> "$env_file"

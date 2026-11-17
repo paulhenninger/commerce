@@ -952,6 +952,11 @@ Stated so nobody assumes otherwise:
 - **Whole-order returns only**; no partial returns, exchanges or partial refunds.
 - **One currency per order**, no tax or shipping-cost calculation, no promotions.
 - **Carts live in the browser** (localStorage), not on the server.
+- **Checkout has no payment provider widget yet.** A real provider's card form
+  is what turns card details into the opaque token checkout sends; until one is
+  integrated, checkout offers the simulated provider's test tokens. That is
+  right for DEV and must be replaced before an INT, QA or PROD deployment can
+  take a real payment.
 - **Catalog search is a SQL `LIKE`**, adequate for hundreds of products.
 - **Deploys are not rolling.** `docker compose up` replaces a service's replicas
   together; zero-downtime releases need an orchestrator's rolling update.

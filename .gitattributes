@@ -1,3 +1,7 @@
+# Every text file is LF in the working tree, Windows checkouts included: the
+# files are read by Linux containers (configs, scripts, env examples), and a
+# stray CR breaks them in ways that are hard to see.
+* text=auto eol=lf
 # Shell scripts must keep LF endings even on Windows checkouts, or the Linux build
 # container fails with "./gradlew: not found" (the shebang ends in \r).
 gradlew text eol=lf

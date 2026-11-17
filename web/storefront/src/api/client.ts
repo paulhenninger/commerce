@@ -32,12 +32,18 @@ export class ApiError extends Error {
   status: number;
   code?: string;
   fields?: Record<string, string>;
+  /** The X-Request-Id of the failed request: what support needs to find it in the logs. */
+  requestId?: string;
+  /** The whole JSON body, for errors that carry data (409 PRICE_CHANGED carries the current prices). */
+  body?: unknown;
 
-  constructor(status: number, message: string, code?: string, fields?: Record<string, string>) {
+  constructor(status: number, message: string, code?: string, fields?: Record<string, string>, requestId?: string, body?: unknown) {
     super(message);
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.requestId = requestId;
+    this.body = body;
   }
 }
 
@@ -108,15 +114,17 @@ async function toError(res: Response): Promise<ApiError> {
   let message = `Request failed (${res.status})`;
   let code: string | undefined;
   let fields: Record<string, string> | undefined;
+  let raw: unknown;
   try {
     const body = (await res.json()) as { message?: string; code?: string; fields?: Record<string, string> };
+    raw = body;
     if (body.message) message = body.message;
     code = body.code;
     fields = body.fields;
   } catch {
     // Non-JSON error body; keep the generic message.
   }
-  return new ApiError(res.status, message, code, fields);
+  return new ApiError(res.status, message, code, fields, res.headers.get('X-Request-Id') ?? undefined, raw);
 }
 
 /** JSON request with one silent-refresh retry on 401 and one re-auth retry when asked. */
