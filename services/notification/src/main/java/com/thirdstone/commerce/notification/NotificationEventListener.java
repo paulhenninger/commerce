@@ -7,6 +7,7 @@ import com.thirdstone.commerce.platform.events.Topics;
 import com.thirdstone.commerce.platform.messaging.EventContext;
 import com.thirdstone.commerce.platform.messaging.EventDispatcher;
 import com.thirdstone.commerce.platform.messaging.EventRouter;
+import com.thirdstone.commerce.platform.messaging.TraceContinuation;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -22,10 +23,13 @@ class NotificationEventListener {
     private final EventDispatcher dispatcher;
     private final EventRouter router;
     private final NotificationRepository notifications;
+    private final TraceContinuation traces;
 
-    NotificationEventListener(EventDispatcher dispatcher, Templates templates, NotificationRepository notifications) {
+    NotificationEventListener(EventDispatcher dispatcher, Templates templates, NotificationRepository notifications,
+                              TraceContinuation traces) {
         this.dispatcher = dispatcher;
         this.notifications = notifications;
+        this.traces = traces;
         this.router = EventRouter.forConsumer("notification")
                 .on(OrderEvents.CONFIRMED, OrderEvents.Confirmed.class, (e, p) -> queue(e, templates.confirmed(p)))
                 .on(OrderEvents.CANCELLED, OrderEvents.Cancelled.class, (e, p) -> queue(e, templates.cancelled(p)))
@@ -37,7 +41,7 @@ class NotificationEventListener {
     }
 
     private void queue(EventEnvelope event, Email email) {
-        if (notifications.insert(event.eventId(), event.aggregateId(), email) == 0) {
+        if (notifications.insert(event.eventId(), event.aggregateId(), email, traces.current()) == 0) {
             EventContext.ignored("already queued");
         }
     }

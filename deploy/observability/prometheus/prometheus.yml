@@ -1,0 +1,64 @@
+# What Prometheus scrapes, and where it sends alerts. Targets are found through
+# Docker's DNS: a service name resolves to every running replica, so replicas
+# that start or stop are picked up within seconds and a service with none left
+# simply has no targets (which is what ServiceDown alerts on).
+
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 15s
+  external_labels:
+    environment: ${COMMERCE_ENV}
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [alertmanager:9093]
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # Every Spring Boot service, on its management port (never reachable from an edge).
+  - job_name: services
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: [identity, catalog, inventory, order, billing, shipping, notification]
+        type: A
+        port: 9091
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+
+  # DEV-only services. A name that does not resolve outside dev simply yields no
+  # targets.
+  - job_name: dev-tools
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: [simulators]
+        type: A
+        port: 9091
+        refresh_interval: 15s
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+
+  - job_name: mysql
+    static_configs:
+      - targets: [mysqld-exporter:9104]
+        labels:
+          service: mysql
+
+  - job_name: observability
+    static_configs:
+      - targets: [localhost:9090]
+        labels: {service: prometheus}
+      - targets: [alertmanager:9093]
+        labels: {service: alertmanager}
+      - targets: [loki:3100]
+        labels: {service: loki}
+      - targets: [tempo:3200]
+        labels: {service: tempo}
+      - targets: [alloy:12345]
+        labels: {service: alloy}

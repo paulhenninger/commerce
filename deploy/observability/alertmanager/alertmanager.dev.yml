@@ -1,0 +1,35 @@
+# DEV: as alertmanager.yml, and every alert is also emailed to Mailpit
+# (http://localhost:8025) so the notifications people would get can be seen.
+global:
+  smtp_smarthost: mailpit:1025
+  smtp_from: alerts@commerce.local
+  smtp_require_tls: false
+
+route:
+  receiver: ops
+  group_by: [alertname, service]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+  routes:
+    - receiver: ops
+      continue: true
+    - receiver: people
+      matchers: [severity=~"critical|warning"]
+
+receivers:
+  - name: ops
+    webhook_configs:
+      - url: http://ops:8080/internal/alerts
+        send_resolved: true
+  - name: people
+    email_configs:
+      - to: oncall@commerce.local
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [alertname=~"ServiceReplicaDown|ConsumerLagHigh|ApiLatencyBurn.*|ContainerRestarting"]
+    equal: [service]
+  - source_matchers: [alertname="MySqlDown"]
+    target_matchers: [alertname=~"DbPoolSaturated|OutboxBacklog"]

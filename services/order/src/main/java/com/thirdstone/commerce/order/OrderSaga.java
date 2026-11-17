@@ -84,6 +84,7 @@ class OrderSaga {
             outbox.append(Topics.ORDER, OrderEvents.REFUNDED, order.id(), new OrderEvents.Refunded(order.id(),
                     order.userId(), order.email(), event.amountCents(), event.currency()));
             metrics.refund(event.amountCents(), event.currency());
+            metrics.reached("refunded");
             return;
         }
         // A cancelled order's money coming back: worth a line in its history.
@@ -129,6 +130,7 @@ class OrderSaga {
         if (!move(event.orderId(), OrderStatus.RETURNED, List.of(OrderStatus.RETURN_REQUESTED), "Return received")) {
             return;
         }
+        metrics.reached("returned");
         OrderRow order = orders.find(event.orderId()).orElseThrow();
         outbox.append(Topics.ORDER, OrderEvents.RETURNED, order.id(), new OrderEvents.Returned(order.id(),
                 order.userId(), order.email(), orders.lines(order.id()), order.totalCents(), order.currency()));

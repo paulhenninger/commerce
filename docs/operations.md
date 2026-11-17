@@ -61,7 +61,23 @@ All rules carry `severity`, `service`, `summary`, `description` and
 | `AuthFailuresSpike` | Sign-in failures or lockouts far above baseline | warning | [identity operations](identity/operations.md) |
 | `ContractViolations` (dev) | The testkit's contract tap sees an invalid event from a real service | warning | [dead letters](#runbook-dead-letters) |
 
-Routing (Alertmanager): grouped by `alertname` and `service`, 30 s group wait,
+**As built (milestone 5).** The rules are in four files (`services.yml`,
+`slo.yml`, `business.yml`, `messaging.yml`), all passing `promtool check rules` (CI will run it from milestone 10).
+- `ServiceDown` has one rule per service: targets are found through Docker DNS, so a
+  service with no running instance has no `up` series at all, and only `absent()`
+  can notice. It fires about 80 s after the last instance stops
+  (`scripts/verify-observability.py` measures it).
+- `ServiceReplicaDown` compares the healthy count with the most seen in the past hour.
+- `ContainerRestarting` counts changes of `process_start_time_seconds`.
+- `SiteProbeFailing`, `ConsumerLagHigh`, `KafkaBrokerDown` and `KafkaUnderReplicated`
+  use gauges the ops service exports (milestone 6); `ContractViolations` uses the
+  testkit's (milestone 7). Until then they cannot fire.
+- `DeadLettersArriving` and `DeadLetterFlood` use the consumers' own
+  `commerce_events_dead_lettered_total`.
+- `EdgeRateLimiting` is **not implemented**: the nginx edges export no metrics yet.
+  Their 429s are in their access logs (Loki: `{service="storefront-web"} |= " 429 "`).
+
+Routing (Alertmanager): grouped by `alertname` and `service`, 10 s group wait,
 repeat every 4 h. Every alert goes to the ops service. `critical` additionally
 goes to the on-call receiver, `warning` to the team channel — configured per
 environment (`ALERT_*` variables); in dev both are Mailpit. Inhibition:
@@ -124,7 +140,7 @@ holds the follow-up work.
 {service="billing"} | json | log_level="ERROR"
 
 # Why records were dead-lettered
-{environment="dev"} | json | message=~"Dead-lettered.*"
+{environment="dev"} |= "dead-letter topic" | json
 ```
 
 ```promql
@@ -144,10 +160,12 @@ max by (group, topic) (commerce_kafka_consumer_lag)
 
 ```bash
 # Tail one service, pretty
-scripts/stack.sh dev logs -f order | jq -r '[.["@timestamp"], .["log.level"], .message] | @tsv'
+scripts/stack.sh dev logs --no-log-prefix -f order | jq -r '[.["@timestamp"], .log.level, .message] | @tsv'
 
 # Read a dead-letter topic by hand
-scripts/stack.sh dev exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+# (as the ops principal: write its credentials to a client properties file first;
+# see scripts/smoke.sh for how)
+scripts/stack.sh dev exec kafka-1 /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 --topic commerce.order.events.v1.dlt \
   --from-beginning --property print.headers=true --max-messages 10
 ```

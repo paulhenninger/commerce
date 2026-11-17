@@ -191,10 +191,23 @@ settles() {  # <name> <order id> <status> [cancel reason] — waits up to 90 s
   fail "$1" "still $seen after 90 s"
 }
 
+SIMULATORS="http://localhost:$(setting SIMULATORS_PORT)"
+fault() {  # <target> <json>
+  curl -s -o /dev/null -w '%{http_code}' -X PUT "$SIMULATORS/admin/faults/$1" -H 'Content-Type: application/json' --data "$2"
+}
+heal() {  # <target>
+  fault "$1" '{"latencyMs":0,"errorRate":0,"outage":false}' >/dev/null || true
+}
+trap 'heal payment; heal carrier; rm -f "$body_file"' EXIT
+
 echo "Orders"
+# The carrier is down while this order is confirmed and then cancelled: a
+# dispatched order can no longer be cancelled, and a carrier outage must delay
+# shipping and nothing else.
+[ "$(fault carrier '{"latencyMs":0,"errorRate":0,"outage":true}')" = 200 ] || fail "the carrier can be taken down"
 place "a customer places an order" 2 tok_visa
 happy="$order_id"
-settles "the order is confirmed" "$happy" CONFIRMED
+settles "the order is confirmed (with the carrier down)" "$happy" CONFIRMED
 wait_available "confirmed units leave the shop window" 3
 
 expect "an order priced at a stale total is refused" 409 POST /api/v1/orders "${shopper_auth[@]}" \
@@ -210,20 +223,23 @@ place "an order paid with a declined card" 1 tok_decline
 settles "it is cancelled as declined" "$order_id" CANCELLED PAYMENT_DECLINED
 wait_available "its reservation is released" 3
 
-SIMULATORS="http://localhost:$(setting SIMULATORS_PORT)"
-fault() {  # <target> <json>
-  curl -s -o /dev/null -w '%{http_code}' -X PUT "$SIMULATORS/admin/faults/$1" -H 'Content-Type: application/json' --data "$2"
-}
-heal() { fault payment '{"latencyMs":0,"errorRate":0,"outage":false}' >/dev/null || true; }
-trap 'heal; rm -f "$body_file"' EXIT
 [ "$(fault payment '{"latencyMs":0,"errorRate":0,"outage":true}')" = 200 ] || fail "the payment provider can be taken down"
 place "an order while the payment provider is down" 1 tok_visa
 settles "it is cancelled as payment unavailable" "$order_id" CANCELLED PAYMENT_UNAVAILABLE
-heal
+heal payment
 wait_available "its reservation is released" 3
 
 expect "the customer cancels the confirmed order" 200 POST "/api/v1/orders/$happy/cancel" "${shopper_auth[@]}"
 [ "$(json status)" = CANCELLED ] || fail "the cancelled order says so" "$body"
+heal carrier
+for _ in $(seq 1 30); do
+  status GET "/api/v1/backoffice/shipping/shipments?orderId=$happy" "${admin_auth[@]}" >/dev/null
+  body=$(cat "$body_file")
+  [ "$(json status)" = CANCELLED ] && break
+  sleep 1
+done
+[ "$(json status)" = CANCELLED ] || fail "its shipment, never booked, is cancelled" "$body"
+pass "its shipment, never booked, is cancelled"
 wait_available "the cancelled units are back on sale" 5
 for _ in $(seq 1 30); do
   status GET "/api/v1/backoffice/billing/payments?orderId=$happy" "${admin_auth[@]}" >/dev/null

@@ -37,12 +37,13 @@ public class CarrierClient {
     private final CircuitBreaker breaker;
     private final MeterRegistry registry;
 
-    public CarrierClient(ShippingProperties props, MeterRegistry registry) {
+    public CarrierClient(ShippingProperties props, MeterRegistry registry, RestClient.Builder builder) {
         var carrier = props.carrier();
         HttpClient http = HttpClient.newBuilder().connectTimeout(carrier.connectTimeout()).build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
         factory.setReadTimeout(carrier.readTimeout());
-        this.rest = RestClient.builder().baseUrl(carrier.url()).requestFactory(factory)
+        // Boot's builder: calls are timed and traced like every other request.
+        this.rest = builder.clone().baseUrl(carrier.url()).requestFactory(factory)
                 .defaultHeader("Authorization", "Bearer " + carrier.apiKey()).build();
         CircuitBreakerRegistry breakers = CircuitBreakerRegistry.of(CircuitBreakerConfig.custom()
                 .failureRateThreshold(50)

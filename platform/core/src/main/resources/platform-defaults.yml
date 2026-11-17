@@ -72,6 +72,12 @@ management:
   tracing:
     sampling:
       probability: ${TRACE_SAMPLING:1.0}
+  observations:
+    enable:
+      # A span for every scheduled poll (workers, gauges; every few seconds) would
+      # bury the traces that matter. Work done for an event or request continues
+      # that trace explicitly (TraceContinuation).
+      tasks.scheduled: false
   opentelemetry:
     resource-attributes:
       deployment.environment: ${commerce.environment}

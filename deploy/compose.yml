@@ -429,6 +429,161 @@ services:
       MAIL_FROM: ${MAIL_FROM:?Set MAIL_FROM}
       APP_BASE_URL: ${APP_BASE_URL:?Set APP_BASE_URL}
 
+  # ------------------------------------------------------------ observability
+  # Metrics (Prometheus, alerts via Alertmanager), logs (Loki), traces (Tempo),
+  # collected by Alloy and shown in Grafana. Losing any of it does not affect the
+  # store: nothing in the request or event path waits on it.
+
+  prometheus:
+    <<: *hardened
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      # Lets prometheus.yml label every series with the environment.
+      - --enable-feature=expand-external-labels
+    environment:
+      COMMERCE_ENV: ${COMMERCE_ENV:?Set COMMERCE_ENV (dev, int, qa or prod)}
+    networks: [telemetry]
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    tmpfs:
+      - /tmp:size=16m
+    mem_limit: 384m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  alertmanager:
+    <<: *hardened
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    networks: [telemetry]
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    tmpfs:
+      - /tmp:size=16m
+    mem_limit: 96m
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  loki:
+    <<: *hardened
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
+    command: ["-config.file=/etc/loki/loki.yml"]
+    networks: [telemetry]
+    volumes:
+      - ./observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 320m
+    pids_limit: 256
+
+  tempo:
+    <<: *hardened
+    image: grafana/tempo:2.10.10@sha256:12b0820f13ffa10ce956b6e9acc3b03f3cffded99109be6cc09d106fe56e5d38
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    networks: [telemetry]
+    volumes:
+      - ./observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 320m
+    pids_limit: 256
+
+  # One of only two containers that may see the Docker socket (read-only): it
+  # reads container logs. It has no published port and no way out.
+  alloy:
+    <<: *hardened
+    image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy-state
+      - /etc/alloy/config.alloy
+    environment:
+      COMMERCE_ENV: ${COMMERCE_ENV:?Set COMMERCE_ENV (dev, int, qa or prod)}
+      # Only this deployment's containers are collected.
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
+    networks: [telemetry]
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # A path of its own: the image's data directory belongs to another user, and
+      # with every capability dropped root may not write there.
+      - alloy-data:/var/lib/alloy-state
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 256m
+    pids_limit: 256
+
+  grafana:
+    <<: *hardened
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_LOG_MODE: console
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/commerce-overview.json
+    networks: [telemetry, grafana-ingress]
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 256m
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+  # MySQL server statistics, as a login that can read no Commerce data.
+  mysqld-exporter:
+    <<: *hardened
+    image: prom/mysqld-exporter:v0.21.0@sha256:afad0c59a154fea24ca5ea0e6f95f2b0b168601b111266963dc8a347715b5318
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+    command:
+      - --mysqld.address=mysql:3306
+      - --mysqld.username=exporter
+      # The server's certificate is self-signed; the connection is still encrypted.
+      - --tls.insecure-skip-verify
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${DB_EXPORTER_PASSWORD:?Set DB_EXPORTER_PASSWORD}
+    networks: [data, telemetry]
+    mem_limit: 64m
+    pids_limit: 64
+
   # -------------------------------------------------------------------- edges
 
   storefront-web:
@@ -493,6 +648,12 @@ networks:
     ipam:
       config:
         - subnet: ${COMMERCE_NET:-10.77}.4.0/24
+  grafana-ingress:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.7.0/24
   # The way out, for the few services that call real external systems.
   outbound:
     ipam:
@@ -508,6 +669,12 @@ networks:
         - subnet: ${COMMERCE_NET:-10.77}.6.0/24
 
 volumes:
+  prometheus-data:
+  alertmanager-data:
+  loki-data:
+  tempo-data:
+  alloy-data:
+  grafana-data:
   mysql-data:
   mysql-socket:
   kafka-1-data:

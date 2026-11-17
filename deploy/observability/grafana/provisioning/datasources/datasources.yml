@@ -1,0 +1,41 @@
+# Wired together so a trace leads to its logs and a log line to its trace.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 5s
+
+  - name: Loki
+    uid: loki
+    type: loki
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # Every service log line carries "traceId": make it a link to the trace.
+        - name: traceId
+          datasourceUid: tempo
+          matcherRegex: '"traceId":"(\w+)"'
+          url: $${__value.raw}
+          urlDisplayLabel: View trace
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: false
+        customQuery: true
+        query: '{environment=~".+"} |= "$${__span.traceId}"'
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

@@ -28,6 +28,8 @@ class OrderMetrics {
     private final MultiGauge byStatus;
     /** -1 until first measured: until then, nothing is shed. */
     private final AtomicLong inFlight = new AtomicLong(-1);
+    /** How long the oldest order in flight has been waiting: what OrdersStuck alerts on. */
+    private final AtomicLong oldestInFlightSeconds = new AtomicLong();
 
     OrderMetrics(MeterRegistry registry, OrderRepository orders) {
         this.registry = registry;
@@ -35,6 +37,8 @@ class OrderMetrics {
         this.byStatus = MultiGauge.builder("commerce.orders.by.status")
                 .description("Orders in each status").register(registry);
         registry.gauge("commerce.orders.in.flight", inFlight);
+        io.micrometer.core.instrument.Gauge.builder("commerce.orders.oldest.in.flight.age", oldestInFlightSeconds,
+                AtomicLong::get).baseUnit("seconds").register(registry);
     }
 
     long inFlight() {
@@ -42,15 +46,20 @@ class OrderMetrics {
     }
 
     void placed() {
-        Counter.builder("commerce.orders").tag("event", "placed").register(registry).increment();
+        Counter.builder("commerce.orders").tag("outcome", "placed").tag("reason", "none").register(registry).increment();
     }
 
     /** An order reached CONFIRMED or CANCELLED: how long it took from placement. */
     void settled(OrderRow order, String outcome, String reason) {
-        Counter.builder("commerce.orders").tag("event", outcome.toLowerCase())
+        Counter.builder("commerce.orders").tag("outcome", outcome.toLowerCase())
                 .tag("reason", reason == null ? "none" : reason).register(registry).increment();
         Timer.builder("commerce.order.saga").tag("outcome", outcome).publishPercentileHistogram()
                 .register(registry).record(Duration.between(order.createdAt(), Instant.now()));
+    }
+
+    /** A later step of an order's life: returned, refunded. */
+    void reached(String outcome) {
+        Counter.builder("commerce.orders").tag("outcome", outcome).tag("reason", "none").register(registry).increment();
     }
 
     void revenue(long cents, String currency) {
@@ -64,6 +73,7 @@ class OrderMetrics {
     @Scheduled(fixedDelay = 2000)
     void refreshInFlight() {
         inFlight.set(orders.inFlight());
+        oldestInFlightSeconds.set(orders.oldestInFlightAgeSeconds());
     }
 
     @Scheduled(fixedDelay = 5000)

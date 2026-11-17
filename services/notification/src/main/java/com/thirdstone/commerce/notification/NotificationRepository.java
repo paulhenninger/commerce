@@ -12,7 +12,8 @@ import java.util.Optional;
 @Repository
 class NotificationRepository {
 
-    record Pending(long id, String recipient, String template, String subject, String body, int attempts) {
+    record Pending(long id, String recipient, String template, String subject, String body, int attempts,
+                   String traceparent) {
     }
 
     /** What the back office may see: who was sent what, when — never the body. */
@@ -26,12 +27,19 @@ class NotificationRepository {
         this.jdbc = jdbc;
     }
 
-    int insert(String eventId, String orderId, Email email) {
+    int insert(String eventId, String orderId, Email email, String traceparent) {
         return jdbc.sql("""
                         INSERT IGNORE INTO notifications (event_id, order_id, recipient, template, subject, body, status,
-                                                          next_attempt_at, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, 'PENDING', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))""")
-                .params(eventId, orderId, email.recipient(), email.template(), email.subject(), email.body()).update();
+                                                          traceparent, next_attempt_at, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))""")
+                .params(eventId, orderId, email.recipient(), email.template(), email.subject(), email.body(), traceparent)
+                .update();
+    }
+
+    long oldestPendingAgeSeconds() {
+        Long age = jdbc.sql("SELECT TIMESTAMPDIFF(SECOND, MIN(created_at), UTC_TIMESTAMP(6)) FROM notifications "
+                + "WHERE status = 'PENDING'").query(Long.class).optional().orElse(null);
+        return age == null ? 0 : age;
     }
 
     /** Due emails, leased to this worker (see ShipmentWorker for the pattern). */
@@ -48,10 +56,10 @@ class NotificationRepository {
     }
 
     Optional<Pending> pending(long id) {
-        return jdbc.sql("SELECT id, recipient, template, subject, body, attempts FROM notifications "
+        return jdbc.sql("SELECT id, recipient, template, subject, body, attempts, traceparent FROM notifications "
                         + "WHERE id = ? AND status = 'PENDING'")
                 .param(id).query((rs, n) -> new Pending(rs.getLong(1), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getString(5), rs.getInt(6))).optional();
+                        rs.getString(4), rs.getString(5), rs.getInt(6), rs.getString(7))).optional();
     }
 
     void sent(long id) {
