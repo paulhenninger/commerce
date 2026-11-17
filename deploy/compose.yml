@@ -501,7 +501,8 @@ services:
       - --storage.path=/alertmanager
     networks: [telemetry]
     volumes:
-      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Environments that page people supply their own file (ALERTMANAGER_CONFIG).
+      - ${ALERTMANAGER_CONFIG:-./observability/alertmanager/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager-data:/alertmanager
     tmpfs:
       - /tmp:size=16m

@@ -1,0 +1,13 @@
+# INT: the system integrated with real external systems, on one broker and one
+# instance of each service. No test tooling of any kind (verify-clean-deployments.sh).
+# Every setting comes from deploy/env/int.env (see int.env.example); Compose
+# refuses to start if one is missing.
+
+services:
+  # The services that call real external systems get a way out.
+  billing:
+    networks: [outbound]
+  shipping:
+    networks: [outbound]
+  notification:
+    networks: [outbound]

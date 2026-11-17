@@ -573,8 +573,8 @@ flowchart LR
 
 ### Metrics
 
-Scraped from each service's management port (never proxied by an edge) every 5 s
-in dev and 15 s elsewhere. All carry `application` and `environment` tags.
+Scraped from each service's management port (never proxied by an edge) every 5 s in every environment (one
+configuration; at this size the cost is small). All carry `application` and `environment` tags.
 
 | Metric | Type | Tags | Meaning |
 |---|---|---|---|
@@ -891,9 +891,10 @@ How the HA topology behaves:
 you watch and prove rather than assume: the console's Instances page shows every
 replica and broker and can stop, kill, pause or restart each one while the
 simulated shoppers keep ordering, and the Resilience proofs page turns that into
-pass/fail experiments (section 11). The HA topology needs about 12 GB of memory
-for Docker (10 GB at the least). `scripts/stack.sh dev --lite up -d` runs single
-instances in 8 GB — everything works except the experiments that need a second
+pass/fail experiments (section 11). Measured: the HA topology uses about 6.4 GiB
+and runs on an 8 GB Docker Desktop; 10 GB leaves headroom for simulated load and
+the chaos lab. `scripts/stack.sh dev --lite up -d` runs single
+instances, with less memory — everything works except the experiments that need a second
 replica or broker, which report "not applicable" instead of running.
 
 ## 13. Security

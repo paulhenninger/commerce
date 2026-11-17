@@ -33,7 +33,8 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 # also keeps working when a caller has switched off Git Bash's path rewriting.
 if command -v cygpath >/dev/null; then root="$(cygpath -m "$root")"; fi
 deploy="$root/deploy"
-env_file="$deploy/env/$env.env"
+# STACK_ENV_FILE: another settings file (scripts/verify-clean-deployments.sh uses it).
+env_file="${STACK_ENV_FILE:-$deploy/env/$env.env}"
 
 random() {  # 40 characters, safe in JAAS strings, nginx config and URLs
   # A bounded read first: an endless one would end in SIGPIPE, which pipefail
@@ -81,18 +82,35 @@ fi
 
 files=(-f "$deploy/compose.yml")
 ha="$deploy/compose.ha.yml"
+use_ha=false
 case "$env" in
   dev)
     files+=(-f "$deploy/compose.dev.yml")
-    if [ "$lite" = false ] && [ -f "$ha" ]; then files+=(-f "$ha"); fi
+    if [ "$lite" = false ]; then files+=(-f "$ha"); use_ha=true; fi
     ;;
   int)
     files+=(-f "$deploy/compose.int.yml")
     ;;
   qa|prod)
     files+=(-f "$ha" -f "$deploy/compose.$env.yml")
+    use_ha=true
     ;;
 esac
+
+# The environment is the one asked for, whatever a settings file says: a PROD
+# file that said "dev" would switch off TestToolingGuard.
+export COMMERCE_ENV="$env"
+
+# The HA topology's cluster-wide Kafka settings, unless the environment file or
+# the shell sets them: three brokers, three copies of everything, two in sync.
+# (Compose gives shell variables precedence over the env file, so read the file.)
+setting_of() { grep -E "^$1=" "$env_file" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r'; }
+if [ "$use_ha" = true ]; then
+  for pair in "KAFKA_BOOTSTRAP_SERVERS=kafka-1:9092,kafka-2:9092,kafka-3:9092"               "KAFKA_QUORUM_VOTERS=1@kafka-1:9095,2@kafka-2:9095,3@kafka-3:9095"               "KAFKA_REPLICATION_FACTOR=3" "KAFKA_MIN_INSYNC_REPLICAS=2"; do
+    name="${pair%%=*}"
+    if [ -z "${!name:-}" ] && [ -z "$(setting_of "$name")" ]; then export "$pair"; fi
+  done
+fi
 
 # Each environment's networks live in their own private /16 (see compose.yml),
 # so environments side by side on one host never overlap. Override with
