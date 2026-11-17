@@ -526,8 +526,9 @@ without it for machines with less memory. On one Docker host this is
 availability against process failure, not host failure; MySQL and the edges are
 single containers.
 
-**Consequences.** DEV needs about 12 GB of memory for Docker (the lite mode
-fits in 8 GB). The topology that is proven in DEV is the one QA and PROD run.
+**Consequences.** DEV was expected to need about 12 GB of memory for Docker;
+measured at milestone 9, the HA topology uses about 6.4 GiB and runs on 8 GB
+(10 GB recommended for headroom under simulated load). The topology that is proven in DEV is the one QA and PROD run.
 
 **Rejected.** HA opt-in for DEV (the first draft) — the default environment
 could then prove nothing about failover. Docker Swarm locally — rolling updates,

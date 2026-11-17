@@ -1,0 +1,95 @@
+# The high-availability topology (architecture, section 12): two instances of
+# every stateless service and three Kafka brokers, each topic replicated three
+# times and needing two in sync to accept a write. Used by DEV (by default), QA
+# and PROD; scripts/stack.sh adds it and sets the cluster-wide Kafka settings
+# that go with it (bootstrap list, quorum, replication), which an environment
+# file may override.
+#
+# Any one service instance or any one broker can fail with no data lost and no
+# customer request failing for longer than a retry. Not provided here: host-level
+# availability (one Docker host) and a replicated MySQL — see section 15.
+#
+# Switching an existing DEV stack between this and --lite changes the Kafka
+# quorum: remove its volumes first (scripts/stack.sh dev down -v).
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "5"
+
+x-kafka-env: &kafka-env
+  CLUSTER_ID: ${KAFKA_CLUSTER_ID:-Q29tbWVyY2VLYWZrYUNsdXN0ZQ}
+  QUORUM_VOTERS: ${KAFKA_QUORUM_VOTERS:?Use scripts/stack.sh, which sets the HA Kafka settings}
+  REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:-3}
+  MIN_INSYNC_REPLICAS: ${KAFKA_MIN_INSYNC_REPLICAS:-2}
+  BROKER_PASSWORD: ${KAFKA_PASSWORD_BROKER:?Set KAFKA_PASSWORD_BROKER}
+  INIT_PASSWORD: ${KAFKA_PASSWORD_INIT:?Set KAFKA_PASSWORD_INIT}
+
+x-kafka: &kafka
+  <<: *hardened
+  image: apache/kafka:4.4.0@sha256:833b867a9585a141da455dc2b57431c65cbccb27f11c91f694444cca9f777e0f
+  entrypoint: ["/bin/bash", "/commerce/start.sh"]
+  networks: [events]
+  tmpfs:
+    - /tmp:size=64m
+  mem_limit: 512m
+  pids_limit: 512
+  healthcheck:
+    test: ["CMD", "bash", "-c", ": > /dev/tcp/127.0.0.1/9092"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+    start_period: 30s
+
+x-two: &two
+  deploy:
+    replicas: 2
+
+services:
+  kafka-2:
+    <<: *kafka
+    environment:
+      <<: *kafka-env
+      NODE_ID: 2
+      ADVERTISED_HOST: kafka-2
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+      - ./kafka/start.sh:/commerce/start.sh:ro
+
+  kafka-3:
+    <<: *kafka
+    environment:
+      <<: *kafka-env
+      NODE_ID: 3
+      ADVERTISED_HOST: kafka-3
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+      - ./kafka/start.sh:/commerce/start.sh:ro
+
+  # Topics and access rules are created once all three brokers are up, so every
+  # topic gets its three replicas from the start.
+  kafka-init:
+    depends_on:
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+
+  identity: *two
+  catalog: *two
+  inventory: *two
+  order: *two
+  billing: *two
+  shipping: *two
+  notification: *two
+  ops: *two
+
+volumes:
+  kafka-2-data:
+  kafka-3-data:

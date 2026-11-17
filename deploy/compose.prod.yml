@@ -1,0 +1,28 @@
+# PROD: the HA topology (compose.ha.yml) with production settings: 10% trace
+# sampling (parent-based: a sampled request stays sampled across every service),
+# two-factor sessions required for the back office and the ops console, and no
+# test tooling of any kind.
+
+x-prod: &prod
+  environment:
+    TRACE_SAMPLING: ${TRACE_SAMPLING:-0.1}
+
+services:
+  billing:
+    <<: *prod
+    networks: [outbound]
+  shipping:
+    <<: *prod
+    networks: [outbound]
+  notification:
+    <<: *prod
+    networks: [outbound]
+  catalog: *prod
+  inventory: *prod
+  order: *prod
+  ops: *prod
+  identity:
+    environment:
+      TRACE_SAMPLING: ${TRACE_SAMPLING:-0.1}
+      ADMIN_REQUIRES_MFA: "true"
+      OPS_REQUIRE_MFA: "true"

@@ -1,0 +1,10 @@
+# QA: the PROD topology (compose.ha.yml) with QA's settings: real external
+# systems (their sandboxes), no test tooling of any kind.
+
+services:
+  billing:
+    networks: [outbound]
+  shipping:
+    networks: [outbound]
+  notification:
+    networks: [outbound]

@@ -126,8 +126,8 @@ CI fails if a DEV-only container appears in another environment's Compose model.
 
 ```bash
 cp deploy/env/dev.env.example deploy/env/dev.env     # then fill the two keys it asks for
-scripts/stack.sh dev up -d --build --wait          # HA topology: give Docker 12 GB
-scripts/stack.sh dev --lite up -d --build --wait   # single instances: fits in 8 GB
+scripts/stack.sh dev up -d --build --wait          # HA topology: ~6.4 GiB; give Docker 8-10 GB
+scripts/stack.sh dev --lite up -d --build --wait   # single instances: less memory
 ```
 
 | URL (dev) | What |
