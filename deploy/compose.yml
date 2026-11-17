@@ -370,6 +370,65 @@ services:
       PAYMENT_GATEWAY_URL: ${PAYMENT_GATEWAY_URL:?Set PAYMENT_GATEWAY_URL}
       PAYMENT_GATEWAY_KEY: ${PAYMENT_GATEWAY_KEY:?Set PAYMENT_GATEWAY_KEY}
 
+  shipping:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: shipping
+    image: commerce-shipping:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [edge, data, events, telemetry]
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:mysql://mysql:3306/shipping?sslMode=REQUIRED
+      DB_USER: shipping_app
+      DB_PASSWORD: ${SHIPPING_DB_PASSWORD:?Set SHIPPING_DB_PASSWORD}
+      DB_OWNER_USER: shipping_owner
+      DB_OWNER_PASSWORD: ${SHIPPING_DB_OWNER_PASSWORD:?Set SHIPPING_DB_OWNER_PASSWORD}
+      KAFKA_USERNAME: shipping
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD_SHIPPING:?Set KAFKA_PASSWORD_SHIPPING}
+      # Required everywhere; outside dev it must be a real carrier.
+      CARRIER_URL: ${CARRIER_URL:?Set CARRIER_URL}
+      CARRIER_KEY: ${CARRIER_KEY:?Set CARRIER_KEY}
+
+  notification:
+    <<: *jvm
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: notification
+    image: commerce-notification:${IMAGE_TAG:-local}
+    depends_on:
+      mysql-init:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [edge, data, events, telemetry]
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:mysql://mysql:3306/notification?sslMode=REQUIRED
+      DB_USER: notification_app
+      DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD}
+      DB_OWNER_USER: notification_owner
+      DB_OWNER_PASSWORD: ${NOTIFICATION_DB_OWNER_PASSWORD:?Set NOTIFICATION_DB_OWNER_PASSWORD}
+      KAFKA_USERNAME: notification
+      KAFKA_PASSWORD: ${KAFKA_PASSWORD_NOTIFICATION:?Set KAFKA_PASSWORD_NOTIFICATION}
+      MAIL_HOST: ${MAIL_HOST:?Set MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-true}
+      MAIL_STARTTLS: ${MAIL_STARTTLS:-true}
+      MAIL_FROM: ${MAIL_FROM:?Set MAIL_FROM}
+      APP_BASE_URL: ${APP_BASE_URL:?Set APP_BASE_URL}
+
   # -------------------------------------------------------------------- edges
 
   storefront-web:
@@ -390,6 +449,10 @@ services:
       inventory:
         condition: service_healthy
       billing:
+        condition: service_healthy
+      shipping:
+        condition: service_healthy
+      notification:
         condition: service_healthy
     networks: [edge, storefront-ingress]
     environment:

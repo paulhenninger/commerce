@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: shipping
+
+commerce:
+  carrier:
+    # Required, no default.
+    url: ${CARRIER_URL}
+    api-key: ${CARRIER_KEY}
+  shipping:
+    worker-interval-millis: 2000
+    # How often a booked shipment's status is asked for.
+    poll-interval: ${CARRIER_POLL_INTERVAL:2s}

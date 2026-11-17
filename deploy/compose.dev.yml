@@ -48,7 +48,8 @@ services:
     networks: [sandbox, telemetry, simulators-ingress]
     environment:
       COMMERCE_ENV: dev
-      SIMULATOR_API_KEY: ${PAYMENT_GATEWAY_KEY:?Set PAYMENT_GATEWAY_KEY}
+      # billing's key and shipping's key.
+      SIMULATOR_API_KEY: ${PAYMENT_GATEWAY_KEY:?Set PAYMENT_GATEWAY_KEY},${CARRIER_KEY:?Set CARRIER_KEY}
       OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
     ports:
       - "127.0.0.1:${SIMULATORS_PORT:-8090}:8080"
@@ -62,6 +63,18 @@ services:
     depends_on:
       simulators:
         condition: service_healthy
+
+  shipping:
+    networks: [sandbox]
+    depends_on:
+      simulators:
+        condition: service_healthy
+
+  notification:
+    networks: [mail]
+    depends_on:
+      mailpit:
+        condition: service_started
 
   # The lab's principals: testkit, testkit-chaos, intruder.
   kafka-init:

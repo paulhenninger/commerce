@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: notification
+  mail:
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USER:}
+    password: ${MAIL_PASS:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_STARTTLS:true}
+            required: ${MAIL_STARTTLS:true}
+          # Jakarta Mail waits forever by default: a relay that stops answering
+          # would hold the worker indefinitely.
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+management:
+  health:
+    mail:
+      # Mail being down delays emails; it is not a reason to restart anything.
+      enabled: false
+
+commerce:
+  mail:
+    from: ${MAIL_FROM}
+    shop-url: ${APP_BASE_URL:http://localhost:8081}
+  notification:
+    worker-interval-millis: 2000

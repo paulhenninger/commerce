@@ -823,7 +823,7 @@ the ones it needs.
 
 | Network | Members | Purpose |
 |---|---|---|
-| `edge` | storefront-web, ops-web, identity, catalog, order, inventory, billing (read-only back office), ops | HTTP from the edges to services |
+| `edge` | storefront-web, ops-web, identity, catalog, order, inventory, billing, shipping, notification (the last three for read-only back office), ops | HTTP from the edges to services |
 | `sim` (dev) | testkit, storefront-web | Simulated shoppers reaching the storefront edge the way browsers do |
 | `control` (dev) | ops, controller, testkit | The console's instance controls and experiments |
 | `docker` (dev) | controller, docker-proxy | The only path to the Docker API |

@@ -15,7 +15,7 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-17: **milestones 0–3 are complete**; milestone 4 is next.
+As of 2026-11-17: **milestones 0–4 are complete**; milestone 5 is next.
 
 | Area | State |
 |---|---|
@@ -30,9 +30,11 @@ As of 2026-11-17: **milestones 0–3 are complete**; milestone 4 is next.
 | `services/order` | 5.6: API (place, list, get, cancel, return), back office, saga incl. shipping and refund events, saga timeout, load shedding, metrics. 11 integration tests. The return and shipping paths are coded but first exercised end to end in milestone 4. Extra column `return_reason` |
 | `services/billing` | Complete for 5.7, 8 integration tests against a fake provider (charge, decline, unavailable after one retry, expired, duplicate, cancel before/after charge) |
 | `services/simulators` | Payment and carrier simulators with fault switches (architecture §11), refuses to start outside dev, 6 tests |
-| `services/{shipping,notification,ops,testkit,controller}` | Not started. A service joins the build (`settings.gradle`) once it has `src/main/resources/application.yml` |
-| `deploy/` | `compose.yml` (mysql, mysql-init, kafka-1, kafka-init, identity, catalog, inventory, order, billing, storefront-web), `compose.dev.yml` (mailpit, simulators with its fault API on `127.0.0.1:8090`, dev Kafka principals), `env/dev.env.example`, `mysql/`, `kafka/`. No HA overlay, observability or other environments yet |
-| `scripts/` | `stack.sh` (generates `deploy/env/dev.env` on first use and appends settings added to the example later), `smoke.sh` (43 checks on a fresh stack: edge routing, sign-up, forged identity, back office, the order saga's happy path and every failure branch with stock restored, customer cancel with refund, Kafka access control). The saga *timeout* branch is proved by `SagaTimeoutIntegrationTest`, not by smoke.sh (it takes the full 2 min) |
+| `services/shipping` | Complete for 5.8: handlers record shipments; `ShipmentWorker` leases due rows (SKIP LOCKED), calls the carrier outside any transaction, announces each step in order, backs off up to 5 min. Carrier breaker. Back office read-only (no addresses). 5 integration tests |
+| `services/notification` | Complete for 5.9: six templates, one email per event id, `NotificationWorker` with lease + backoff (1 min doubling to 1 h, `FAILED` after 30 attempts). Back office without bodies. 4 integration tests (mail sender mocked) |
+| `services/{ops,testkit,controller}` | Not started. A service joins the build (`settings.gradle`) once it has `src/main/resources/application.yml` |
+| `deploy/` | `compose.yml` (mysql, mysql-init, kafka-1, kafka-init, identity, catalog, inventory, order, billing, shipping, notification, storefront-web), `compose.dev.yml` (mailpit, simulators (shared by billing and shipping, one key each) with its fault API on `127.0.0.1:8090`, dev Kafka principals), `env/dev.env.example`, `mysql/`, `kafka/`. No HA overlay, observability or other environments yet |
+| `scripts/` | `stack.sh` (generates `deploy/env/dev.env` on first use and appends settings added to the example later), `smoke.sh` (60 checks on a fresh stack: edge routing, sign-up, forged identity, back office, the order saga's happy path and every failure branch with stock restored, customer cancel with refund, delivery, return to REFUNDED with restock, all six emails in Mailpit, Kafka access control). The saga *timeout* branch is proved by `SagaTimeoutIntegrationTest`, not by smoke.sh (it takes the full 2 min) |
 | `services/Dockerfile` | One multi-stage file for every JVM service (`--build-arg SERVICE=…`); compiles once, readiness healthcheck |
 | `docs/identity/` | Bastion's docs, renamed; paths in them still assume Bastion's layout |
 | Root files | `LICENSE`, `SECURITY.md`, `.gitattributes`, `.gitleaks.toml`, `.trivyignore` from Bastion; `.gitignore`, `.dockerignore`. Git repository initialised on `main` |
@@ -225,6 +227,10 @@ it works either way.
 
 **nginx**: an `upstream` zone and a `proxy_cache_path` `keys_zone` share one
 namespace — name cache zones `<name>_cache`.
+
+**Until milestone 5**, every service logs ERROR lines from the OpenTelemetry
+exporter: it sends traces to `alloy:4318`, which does not exist yet. Expected;
+ignore them when reading logs.
 
 **Spring bean names**: Boot already defines `requestContextFilter`; platform
 beans use a `commerce` prefix where a clash is possible.

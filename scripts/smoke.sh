@@ -174,9 +174,9 @@ place() {  # <name> <quantity> <payment method> → order id in $order_id. Waits
   order_id=$(json id)
   pass "$1"
 }
-settles() {  # <name> <order id> <status> [cancel reason] — waits up to 60 s
+settles() {  # <name> <order id> <status> [cancel reason] — waits up to 90 s
   local seen=""
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 90); do
     status GET "/api/v1/orders/$2" "${shopper_auth[@]}" >/dev/null
     body=$(cat "$body_file")
     seen=$(json status)
@@ -188,7 +188,7 @@ settles() {  # <name> <order id> <status> [cancel reason] — waits up to 60 s
     fi
     sleep 1
   done
-  fail "$1" "still $seen after 60 s"
+  fail "$1" "still $seen after 90 s"
 }
 
 echo "Orders"
@@ -235,6 +235,44 @@ done
 pass "the customer's payment is refunded"
 expect "a cancelled order cannot be cancelled again" 409 POST "/api/v1/orders/$happy/cancel" "${shopper_auth[@]}"
 expect "an anonymous caller cannot see the order" 401 GET "/api/v1/orders/$happy"
+
+echo "Fulfilment and returns"
+place "a customer orders one more" 1 tok_visa
+kept="$order_id"
+settles "it is confirmed" "$kept" CONFIRMED
+settles "the carrier dispatches it" "$kept" SHIPPED
+settles "the carrier delivers it" "$kept" DELIVERED
+[ -n "$(json trackingNumber)" ] || fail "the order shows its tracking number" "$body"
+pass "the order shows its tracking number"
+wait_available "the delivered unit is no longer on sale" 4
+expect "the customer asks to return it" 200 POST "/api/v1/orders/$kept/return" "${shopper_auth[@]}"   -H 'Content-Type: application/json' --data '{"reason":"Changed my mind"}'
+[ "$(json status)" = RETURN_REQUESTED ] || fail "the return is recorded" "$body"
+pass "the return is recorded"
+settles "the return reaches the warehouse and is refunded" "$kept" REFUNDED
+[ -n "$(json returnTrackingNumber)" ] || fail "the order shows its return tracking number" "$body"
+pass "the order shows its return tracking number"
+wait_available "the returned unit is back on sale" 5
+status GET "/api/v1/backoffice/billing/payments?orderId=$kept" "${admin_auth[@]}" >/dev/null
+body=$(cat "$body_file")
+[ "$(json status)" = REFUNDED ] || fail "the returned order's payment is refunded" "$body"
+pass "the returned order's payment is refunded"
+expect "a refunded order cannot be returned again" 409 POST "/api/v1/orders/$kept/return" "${shopper_auth[@]}"   -H 'Content-Type: application/json' --data '{"reason":"Again"}'
+
+echo "Customer emails (Mailpit)"
+short="${kept: -8}"
+for kind in "is confirmed" "is on its way" "has been delivered" "Your return label" "Your refund" ; do
+  found=""
+  for _ in $(seq 1 30); do
+    if curl -s "$MAILPIT/api/v1/search?query=to:%22$email%22" | grep -q "\"Subject\":\"[^\"]*$kind[^\"]*$short\|\"Subject\":\"[^\"]*$short[^\"]*$kind"; then
+      found=yes; break
+    fi
+    sleep 1
+  done
+  [ -n "$found" ] || fail "email \"$kind\" arrives for the returned order"
+  pass "email \"$kind\" arrives for the returned order"
+done
+curl -s "$MAILPIT/api/v1/search?query=to:%22$email%22" | grep -q "\"Subject\":\"[^\"]*${happy: -8} is cancelled"   || fail "email \"is cancelled\" arrives for the cancelled order"
+pass "email \"is cancelled\" arrives for the cancelled order"
 
 echo "Kafka access control"
 kafka() {  # <principal or ''> <command…>: runs a Kafka CLI tool inside the broker container as that principal

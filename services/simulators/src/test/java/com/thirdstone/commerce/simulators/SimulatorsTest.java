@@ -14,7 +14,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest(properties = {"commerce.simulators.api-key=sim-key", "commerce.simulators.carrier.dispatch-after=0s",
+@SpringBootTest(properties = {"commerce.simulators.api-key=sim-key, other-key", "commerce.simulators.carrier.dispatch-after=0s",
         "commerce.simulators.carrier.deliver-after=1h", "management.server.port=0",
         "management.tracing.export.enabled=false"})
 @AutoConfigureMockMvc

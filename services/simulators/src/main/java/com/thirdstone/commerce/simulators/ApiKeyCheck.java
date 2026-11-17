@@ -6,24 +6,35 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.List;
 
-/** Like a real provider, the simulators want to know who is calling. */
+/**
+ * Like a real provider, the simulators want to know who is calling. Each caller
+ * has its own key (billing's for payments, shipping's for the carrier);
+ * {@code commerce.simulators.api-key} lists them, comma-separated.
+ */
 @Component
 class ApiKeyCheck {
 
-    private final byte[] key;
+    private final List<byte[]> accepted;
 
     ApiKeyCheck(SimulatorProperties props) {
-        this.key = props.apiKey().getBytes(StandardCharsets.UTF_8);
+        this.accepted = Arrays.stream(props.apiKey().split(",")).map(String::strip).filter(k -> !k.isEmpty())
+                .map(k -> ("Bearer " + k).getBytes(StandardCharsets.UTF_8)).toList();
     }
 
     void check(String authorization) {
-        if (key.length == 0) {
+        if (accepted.isEmpty()) {
             return;
         }
         byte[] given = authorization == null ? new byte[0] : authorization.getBytes(StandardCharsets.UTF_8);
-        byte[] expected = ("Bearer " + new String(key, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
-        if (!MessageDigest.isEqual(given, expected)) {
+        boolean ok = false;
+        for (byte[] key : accepted) {
+            // No early exit: every key is compared, in constant time.
+            ok |= MessageDigest.isEqual(given, key);
+        }
+        if (!ok) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Invalid API key", "INVALID_API_KEY");
         }
     }
