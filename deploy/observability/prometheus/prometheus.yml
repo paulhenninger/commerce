@@ -36,7 +36,7 @@ scrape_configs:
   - job_name: dev-tools
     metrics_path: /actuator/prometheus
     dns_sd_configs:
-      - names: [simulators, testkit]
+      - names: [simulators, testkit, controller]
         type: A
         port: 9091
         refresh_interval: 15s

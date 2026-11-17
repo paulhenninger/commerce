@@ -15,6 +15,7 @@ export function Rail() {
       <ul className="rail-links">
         <li><NavLink to="/" end>Overview</NavLink></li>
         <li><NavLink to="/incidents">Incidents</NavLink></li>
+        <li><NavLink to="/instances">Instances</NavLink></li>
         <li><NavLink to="/kafka">Kafka</NavLink></li>
         <li><NavLink to="/business">Business</NavLink></li>
       </ul>

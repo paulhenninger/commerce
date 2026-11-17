@@ -121,6 +121,8 @@ h3 { font-size: 0.95rem; font-weight: 600; margin: 1rem 0 0.5rem; }
 .table tr:last-child td { border-bottom: 0; }
 .row-alert td { background: color-mix(in srgb, var(--warning) 10%, transparent); }
 .row-selected td { background: var(--ground); }
+.controls { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+button.danger { background: transparent; color: var(--critical-ink); border-color: var(--critical); }
 .lag { display: inline-block; margin-right: 0.9rem; color: var(--ink-2); }
 
 /* Status: a glyph, a word, and colour — never colour alone. */

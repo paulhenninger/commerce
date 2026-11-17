@@ -132,6 +132,54 @@ services:
     mem_limit: 384m
     pids_limit: 512
 
+  # The only container that touches the Docker socket (ADR-027): an explicit
+  # allowlist (dev/docker-proxy.conf) of listing containers and the six
+  # lifecycle actions. Runs as the image's unprivileged user; group 0 is added
+  # only because the socket is root:root 660. No capabilities, no published
+  # port, and the docker network is its only one.
+  docker-proxy:
+    <<: *hardened
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+    group_add: ["0"]
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    networks: [docker]
+    volumes:
+      - ./dev/docker-proxy.conf:/etc/nginx/nginx.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    tmpfs:
+      - /tmp:size=8m
+    mem_limit: 48m
+    pids_limit: 32
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2375/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # Starts, stops, kills, pauses and restarts this deployment's instances for the
+  # ops console, within an allowlist that never includes itself, the proxy, ops
+  # or the observability stack.
+  controller:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE: controller
+    image: commerce-controller:${IMAGE_TAG:-local}
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
+    networks: [docker, control, telemetry]
+    environment:
+      COMMERCE_ENV: dev
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
+      OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 256m
+    pids_limit: 256
+
   storefront-web:
     networks: [sim]
     volumes:
@@ -141,6 +189,7 @@ services:
     networks: [control]
     environment:
       TESTKIT_URL: http://testkit:8080
+      CONTROLLER_URL: http://controller:8080
 
   # The lab's principals: testkit, testkit-chaos, intruder.
   kafka-init:
@@ -170,6 +219,12 @@ networks:
     ipam:
       config:
         - subnet: ${COMMERCE_NET:-10.77}.26.0/24
+  # controller ↔ docker-proxy: the only path to the Docker API
+  docker:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${COMMERCE_NET:-10.77}.27.0/24
   tools-ingress:
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "false"

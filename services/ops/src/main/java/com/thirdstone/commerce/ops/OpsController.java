@@ -48,11 +48,17 @@ class OpsController {
     private final OpsProperties props;
     private final Environment env;
     private final TestkitProxy testkit;
+    private final com.thirdstone.commerce.ops.instances.InstancesView instancesView;
+    private final com.thirdstone.commerce.ops.instances.ControllerClient controllerClient;
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OpsController.class);
 
     OpsController(SystemView system, KafkaInspector kafka, DeadLetterReplay replay, IncidentService incidents,
-                  LiveFeed live, OpsProperties props, Environment env, TestkitProxy testkit) {
+                  LiveFeed live, OpsProperties props, Environment env, TestkitProxy testkit,
+                  com.thirdstone.commerce.ops.instances.InstancesView instancesView,
+                  com.thirdstone.commerce.ops.instances.ControllerClient controllerClient) {
         this.testkit = testkit;
+        this.instancesView = instancesView;
+        this.controllerClient = controllerClient;
         this.system = system;
         this.kafka = kafka;
         this.replay = replay;
@@ -69,6 +75,7 @@ class OpsController {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("environment", environment);
         config.put("testkit", testkit.available());
+        config.put("instanceControl", controllerClient.available());
         config.put("grafanaUrl", props.grafanaUrl());
         config.put("services", props.services());
         config.put("replayRequiresMfa", props.replayRequiresMfa());
@@ -167,6 +174,18 @@ class OpsController {
     SseEmitter live(Caller caller) {
         caller.requireAdmin();
         return live.subscribe();
+    }
+
+    @GetMapping("/instances")
+    com.thirdstone.commerce.ops.instances.InstancesView.Instances instances(Caller caller) {
+        caller.requireAdmin();
+        return instancesView.instances();
+    }
+
+    /** DEV only: stop, start, kill, pause, unpause or restart one instance. Recorded as an incident note. */
+    @PostMapping("/instances/{id}/{action}")
+    tools.jackson.databind.JsonNode act(Caller caller, @PathVariable String id, @PathVariable String action) {
+        return instancesView.act(caller, id, action);
     }
 
     /** DEV only: the testkit's API (shoppers, chaos lab). Absent (404) anywhere else. */

@@ -731,7 +731,12 @@ ops console → ops service → controller → docker-proxy → Docker
 
 - `docker-proxy` is the only container with the Docker socket. It permits
   listing containers and starting, stopping, killing, pausing and restarting
-  them — no images, volumes, networks, exec or container creation.
+  them — no images, volumes, networks, exec or container creation. As built it
+  is nginx with an explicit allowlist (`deploy/dev/docker-proxy.conf`), running
+  as an unprivileged user with group 0 added (the socket is `root:root 660`).
+  `tecnativa/docker-socket-proxy` was rejected: allowing any lifecycle action
+  needs its `POST=1`, which together with `CONTAINERS=1` (needed to list) also
+  lets `POST /containers/create` and `/containers/{id}/exec` through.
 - `controller` accepts requests only for containers of this Compose project and
   only for services on its allowlist: the domain services, identity, the edges,
   Kafka brokers, MySQL, and the simulators. It refuses itself, `docker-proxy`,
