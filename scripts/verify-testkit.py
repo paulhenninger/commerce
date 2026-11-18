@@ -4,8 +4,10 @@ section 11 says, and that the system contains every problem actor.
 
     scripts/stack.sh dev up -d --wait && scripts/verify-testkit.py
 
-1. A fresh stack is a shop: seeded products with stock, and the administrator
-   and shopper@example.com can sign in.
+1. Switching test data on makes the stack a shop: seeded products with stock,
+   and the administrator and shopper@example.com can sign in. (DEV's
+   simulations are off until switched on, ADR-033; this script switches on what
+   it needs and puts test data back as it found it.)
 2. Twenty simulated shoppers sustain orders, cancellations and returns.
 3. Ten problem actors run at once (bad producers, the intruder, bad consumers)
    and each produces its expected response — while scripts/smoke.sh still passes.
@@ -38,6 +40,7 @@ ORDER, INVENTORY, STOCK = 'commerce.order.events.v1', 'commerce.inventory.events
 BILLING, SHIPPING = 'commerce.billing.events.v1', 'commerce.shipping.events.v1'
 passed = 0
 token = None
+test_data_before = None
 
 
 def ok(name):
@@ -51,6 +54,8 @@ def fail(name, detail=''):
     try:
         call('DELETE', '/api/v1/ops/testkit/actors')
         call('PUT', '/api/v1/ops/testkit/shoppers', settings(0, 0))
+        if test_data_before is False:
+            call('PUT', '/api/v1/ops/testkit/test-data', {'on': False})
     except Exception:  # noqa: BLE001 — best effort clean-up
         pass
     sys.exit(1)
@@ -117,7 +122,16 @@ def counts(view_id):
     return a['counts'] if a else {}
 
 
-print('A fresh stack is a shop')
+print('Test data makes the stack a shop')
+code, login = call('POST', '/api/v1/auth/login', {'email': ENV['BOOTSTRAP_ADMIN_EMAIL'],
+                                                  'password': ENV['DEV_ADMIN_PASSWORD']})
+if code != 200:
+    fail('the administrator (made at startup) signs in to the console', f'{code} {login}')
+token = login['accessToken']
+test_data_before = status()['testData']
+call('PUT', '/api/v1/ops/testkit/test-data', {'on': True})
+wait('the testkit seeds the test data once it is switched on', lambda: status()['seeded'], 300)
+ok('test data switched on and seeded, through the console')
 code, catalog = call('GET', '/api/v1/catalog/products?size=50', base=SHOP, auth=False)
 items = catalog['items'] if code == 200 else []
 if len(items) < 24:
@@ -133,12 +147,6 @@ for email, password in ((ENV['BOOTSTRAP_ADMIN_EMAIL'], ENV['DEV_ADMIN_PASSWORD']
     if code != 200:
         fail(f'{email} can sign in', f'{code} {login}')
     ok(f'{email} can sign in')
-code, login = call('POST', '/api/v1/auth/login', {'email': ENV['BOOTSTRAP_ADMIN_EMAIL'],
-                                                  'password': ENV['DEV_ADMIN_PASSWORD']})
-token = login['accessToken']
-if not status()['seeded']:
-    fail('the testkit reports itself seeded')
-ok('the testkit reports itself seeded, and answers through the console')
 
 print('Simulated shoppers')
 started = time.time()
@@ -287,4 +295,7 @@ if not chaos:
     fail('the contract tap saw the lab\'s bad records', json.dumps(violations))
 ok(f'no real service wrote an invalid event; the tap saw {sum(chaos.values())} from the lab')
 
+call('PUT', '/api/v1/ops/testkit/shoppers', settings(0, 0))
+if test_data_before is False:
+    call('PUT', '/api/v1/ops/testkit/test-data', {'on': False})
 print(f'verify-testkit: {passed} checks passed')

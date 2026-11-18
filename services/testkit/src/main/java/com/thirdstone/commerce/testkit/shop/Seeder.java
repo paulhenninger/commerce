@@ -15,11 +15,14 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Makes a fresh DEV stack a shop worth browsing: the administrator and a
- * shopper account, about two dozen products and their stock — all through the
- * real sign-up flow and the back-office API, as people would. Idempotent: run
- * again, it changes nothing that is already there. Keeps stock topped up so the
- * simulation never runs dry, except for one product that is always sold out.
+ * The DEV administrator, always, and the test data, when it is switched on
+ * (ADR-033). At startup only the administrator is made (through the real sign-up
+ * flow, as a person would): it is setup, not data, and nobody could sign in to
+ * the console without it. Test data — a shopper account, about two dozen products
+ * and their stock, through the back-office API — is seeded when the switch goes
+ * on, and stock is then kept topped up so the simulation never runs dry, except
+ * for one product that is always sold out. Idempotent: seeding again changes
+ * nothing already there. Switching off stops the top-ups and keeps the data.
  */
 @Component
 public class Seeder {
@@ -62,7 +65,10 @@ public class Seeder {
     private final Accounts accounts;
     private final Storefront storefront;
     private final TestkitProperties props;
+    private final AtomicBoolean adminReady = new AtomicBoolean();
     private final AtomicBoolean seeded = new AtomicBoolean();
+    private volatile boolean testData;
+    private volatile Thread seeding;
     private volatile String adminToken;
 
     Seeder(Accounts accounts, Storefront storefront, TestkitProperties props) {
@@ -71,32 +77,72 @@ public class Seeder {
         this.props = props;
     }
 
+    /** Whether the administrator exists and can sign in. */
+    public boolean adminReady() {
+        return adminReady.get();
+    }
+
+    /** Whether the test data has been seeded (it stays, once made, even when switched off). */
     public boolean seeded() {
         return seeded.get();
     }
 
+    public boolean testData() {
+        return testData;
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     void start() {
-        Thread.ofVirtual().name("testkit-seed").start(() -> {
-            for (int attempt = 1; !seeded.get(); attempt++) {
+        Thread.ofVirtual().name("testkit-admin").start(() -> {
+            for (int attempt = 1; !adminReady.get(); attempt++) {
                 try {
-                    seed();
-                    seeded.set(true);
-                    log.atInfo().addKeyValue("products", PRODUCTS.size()).log("DEV data seeded");
+                    ensureAdmin();
+                    adminReady.set(true);
+                    log.atInfo().addKeyValue("admin", props.adminEmail()).log("DEV administrator ready");
                 } catch (RuntimeException e) {
-                    log.atWarn().addKeyValue("attempt", attempt).log("Seeding not possible yet: {}", e.getMessage());
+                    log.atWarn().addKeyValue("attempt", attempt).log("Administrator not ready yet: {}", e.getMessage());
                     Accounts.sleep(Math.min(30_000, 2_000L * attempt));
                 }
             }
         });
     }
 
-    void seed() {
-        if (props.adminPassword() == null || props.adminPassword().isBlank()
-                || props.shopperPassword() == null || props.shopperPassword().isBlank()) {
-            throw new IllegalStateException("DEV_ADMIN_PASSWORD and DEV_SHOPPER_PASSWORD must be set");
+    /**
+     * Switches test data on or off. On: seeds it (in the background, retrying
+     * until the shop can take it) unless already seeded, then tops stock up.
+     */
+    public synchronized void testData(boolean on) {
+        testData = on;
+        if (on && !seeded.get() && (seeding == null || !seeding.isAlive())) {
+            seeding = Thread.ofVirtual().name("testkit-seed").start(() -> {
+                for (int attempt = 1; testData && !seeded.get(); attempt++) {
+                    try {
+                        seed();
+                        seeded.set(true);
+                        log.atInfo().addKeyValue("products", PRODUCTS.size()).log("Test data seeded");
+                    } catch (RuntimeException e) {
+                        log.atWarn().addKeyValue("attempt", attempt).log("Seeding not possible yet: {}", e.getMessage());
+                        Accounts.sleep(Math.min(30_000, 2_000L * attempt));
+                    }
+                }
+            });
+        }
+    }
+
+    void ensureAdmin() {
+        if (props.adminPassword() == null || props.adminPassword().isBlank()) {
+            throw new IllegalStateException("DEV_ADMIN_PASSWORD must be set");
         }
         adminToken = accounts.signIn(props.adminEmail(), props.adminPassword(), ADMIN_IP);
+    }
+
+    void seed() {
+        if (!adminReady.get()) {
+            throw new IllegalStateException("the administrator is not ready yet");
+        }
+        if (props.shopperPassword() == null || props.shopperPassword().isBlank()) {
+            throw new IllegalStateException("DEV_SHOPPER_PASSWORD must be set");
+        }
         accounts.signIn(SHOPPER_EMAIL, props.shopperPassword(), SHOPPER_IP);
         for (Product p : PRODUCTS) {
             Map<String, Object> body = new LinkedHashMap<>();
@@ -107,18 +153,21 @@ public class Seeder {
             body.put("currency", "USD");
             body.put("imageKey", null);
             body.put("active", true);
-            require(storefront.put("/api/v1/backoffice/catalog/products/" + p.sku(), ADMIN_IP, adminToken, body),
+            require(storefront.put("/api/v1/backoffice/catalog/products/" + p.sku(), ADMIN_IP, admin(), body),
                     "product " + p.sku());
         }
-        topUp();
+        stock();
     }
 
-    /** Keeps every product but the sold-out one well stocked. */
+    /** While test data is on: keeps every seeded product but the sold-out one well stocked. */
     @Scheduled(fixedDelay = 30_000, initialDelay = 60_000)
     void topUp() {
-        if (adminToken == null) {
-            return;
+        if (testData && seeded.get()) {
+            stock();
         }
+    }
+
+    private void stock() {
         Map<String, JsonNode> stock = new LinkedHashMap<>();
         for (int page = 0; page < 10; page++) {
             Storefront.Answer answer = storefront.get("/api/v1/backoffice/inventory/stock?size=50&page=" + page,

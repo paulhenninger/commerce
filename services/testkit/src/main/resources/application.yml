@@ -20,4 +20,5 @@ commerce:
       reader-password: ${KAFKA_PASSWORD_TESTKIT:}
       chaos-password: ${KAFKA_PASSWORD_TESTKIT_CHAOS:}
       intruder-password: ${KAFKA_PASSWORD_INTRUDER:}
-    shoppers-at-start: ${TESTKIT_SHOPPERS:0}
+    # The simulation switches (ADR-033); a volume in Compose.
+    state-dir: ${TESTKIT_STATE_DIR:/var/lib/commerce}

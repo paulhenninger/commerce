@@ -8,10 +8,11 @@ It has two goals:
 1. **A fully functional web store built the way a high-traffic one should be** —
    highly available, low latency, high throughput, and observable end to end
    (logs, metrics, traces, alerts).
-2. **A DEV environment where you can watch it work.** Simulated shoppers place,
-   cancel and return orders; you add and stop misbehaving producers and consumers
-   from the monitoring site and see, in real time, that bad data and bad players
-   do not take the system down.
+2. **A DEV environment where you can watch it work.** Switch on simulated
+   shoppers to place, cancel and return orders; add and stop misbehaving
+   producers and consumers from the monitoring site and see, in real time, that
+   bad data and bad players do not take the system down. Nothing runs until you
+   switch it on.
 
 > **Status: built, with CI/CD.** Every milestone of the plan is done except the
 > load baseline (milestone 11). The architecture and every design decision were
@@ -148,9 +149,14 @@ and one broker instead (less memory; the HA experiments then report
 | http://localhost:3000 | Grafana (dashboards, logs, traces) |
 | http://localhost:8025 | Mailpit (every email the system sends) |
 
-DEV seeds two accounts: `admin@example.com` (administrator) and
-`shopper@example.com`; their passwords are `DEV_ADMIN_PASSWORD` and
-`DEV_SHOPPER_PASSWORD` in `deploy/env/dev.env`.
+A fresh DEV stack is an empty shop with one account, `admin@example.com`
+(administrator; password `DEV_ADMIN_PASSWORD` in `deploy/env/dev.env`). Every
+data simulation is off until you switch it on in the ops console: **Test data**
+(`shopper@example.com`, about two dozen products and their stock) and the
+**simulated shoppers** on the Simulated shoppers page, problem producers and
+consumers and the payment and carrier faults in the Chaos lab. The switches
+survive a restart. `prove.sh` and the verify scripts switch on what they need;
+`smoke.sh` needs nothing (it makes its own product).
 
 INT, QA and PROD are deployed by CD from the images CI tested; see
 [docs/configuration.md](docs/configuration.md#cd-github) and

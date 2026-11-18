@@ -696,9 +696,10 @@ One small service standing in for two external systems.
 
 | Function | What it does |
 |---|---|
-| **Seed** (at startup, idempotent) | The accounts `admin@example.com` (bootstrapped as administrator) and `shopper@example.com`, through the real signup flow, reading the verification emails from Mailpit; then ~24 products and their stock through the back-office API. A background job tops stock back up so the simulation never runs dry |
-| **Simulated shoppers** | N real accounts (`sim-<n>@example.com`), each created through the real signup flow, that sign in, browse, place orders, cancel some, and return some delivered ones — all **through `storefront-web`**, with real tokens, exactly as a browser would. Rate and mix are adjustable live. Each shopper presents its own client address (`X-Forwarded-For`), which the dev edge accepts from the testkit only (Bastion's `trusted-proxies.conf` mechanism, mounted in dev), so every per-IP limit applies per shopper as it would to distinct real customers and no limit is switched off |
-| **Contract tap** | A consumer group of its own on every topic: verifies each event against its contract and counts violations per topic and type |
+| **Administrator** (at startup, idempotent) | The account `admin@example.com` (`BOOTSTRAP_ADMIN_EMAIL`, bootstrapped as administrator), through the real signup flow, reading the verification email from Mailpit. This is setup, not test data: without it nobody could sign in to the console to switch anything on |
+| **Test data** (a switch, off by default) | When on: the account `shopper@example.com` (same flow), ~24 products and their stock through the back-office API, and a background job that tops stock back up so the simulation never runs dry. Idempotent, so switching it on again adds nothing twice |
+| **Simulated shoppers** (a switch, off by default) | N real accounts (`sim-<n>@example.com`), each created through the real signup flow, that sign in, browse, place orders, cancel some, and return some delivered ones — all **through `storefront-web`**, with real tokens, exactly as a browser would. Rate and mix are adjustable live. Each shopper presents its own client address (`X-Forwarded-For`), which the dev edge accepts from the testkit only (Bastion's `trusted-proxies.conf` mechanism, mounted in dev), so every per-IP limit applies per shopper as it would to distinct real customers and no limit is switched off |
+| **Contract tap** (always on) | A consumer group of its own on every topic: verifies each event against its contract and counts violations per topic and type. It only reads, so it is not a simulation |
 | **Problem producers** | See below |
 | **Problem consumers** | See below |
 
@@ -723,6 +724,32 @@ Problem consumers (each in its own consumer group):
 | `CRASHING` | Throws and restarts without committing | Reprocesses forever in its own group; others unaffected |
 | `FLAPPING` | Joins and leaves its group every few seconds | Rebalances confined to its group |
 | `STUCK` | Stops polling but keeps its connection | Broker evicts it after `max.poll.interval.ms`; lag alert |
+
+#### The simulation switches
+
+DEV has all of this tooling, but a fresh DEV stack generates no data: every
+data simulation is **off by default** and switched on from the ops console
+(Simulated shoppers and Chaos lab pages; a Test data switch on the Simulated
+shoppers page), through the testkit's API (ADR-033).
+
+| Switch | On | Off |
+|---|---|---|
+| Test data | Seeds shopper, products and stock (once), and tops stock up | Stops the top-ups |
+| Simulated shoppers | Count, rate and mix as set | No shopper acts (count 0) |
+| Each chaos actor (problem producer or consumer, the intruder) | Runs at its rate | Not running |
+| Payment and carrier faults (simulators) | Latency, error rate or outage as set | The simulator answers normally |
+
+- **Off stops; it does not delete.** Data a simulation already made stays, like
+  any real data: products, accounts, their orders, dead letters.
+- **The switches are remembered.** The testkit keeps them on its own volume and
+  re-applies them when it restarts (faults included: it sets them on the
+  simulators again). A fresh stack (`stack.sh dev down -v`) starts with
+  everything off.
+- **Checks switch on what they need.** A resilience experiment turns on test
+  data and the shoppers it needs for its run, and afterwards puts every switch
+  back as it found it. `scripts/smoke.sh` needs no test data (it creates its own
+  product as the administrator); `verify-storefront.py` and `verify-testkit.py`
+  turn test data on. Nothing has to be switched on by hand before any of them.
 
 Starting an actor from the chaos lab and watching the Overview stay green — while
 the Kafka page shows dead letters accumulating and the Incidents page raises the

@@ -34,6 +34,11 @@ export interface ActorView {
 }
 
 export interface TestkitStatus {
+  /** The DEV administrator exists (made at startup: setup, not test data). */
+  adminReady: boolean;
+  /** The Test data switch (ADR-033): off by default. */
+  testData: boolean;
+  /** Test data has been seeded; it stays when the switch goes off. */
   seeded: boolean;
   shoppers: { settings: ShopperSettings; ready: number; creating: number; inFlight: number; counts: Record<string, number> };
   actors: ActorView[];
@@ -52,6 +57,7 @@ const T = '/ops/testkit';
 
 export const testkit = {
   status: () => api<TestkitStatus>(`${T}/status`),
+  setTestData: (on: boolean) => api<unknown>(`${T}/test-data`, { method: 'PUT', body: JSON.stringify({ on }) }),
   setShoppers: (s: ShopperSettings) => api<ShopperSettings>(`${T}/shoppers`, { method: 'PUT', body: JSON.stringify(s) }),
   start: (kind: string, type: string, topic: string, ratePerSecond: number) =>
     api<ActorView>(`${T}/actors`, { method: 'POST', body: JSON.stringify({ kind, type, topic, ratePerSecond }) }),
