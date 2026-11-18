@@ -39,6 +39,7 @@ Change a decision by adding a new record that supersedes it, not by editing hist
 | [030](#adr-030-infrastructure-failures-are-retried-not-dead-lettered) | Infrastructure failures are retried, not dead-lettered | Accepted |
 | [031](#adr-031-refunds-are-queued-and-retried-until-made) | Refunds are queued and retried until made | Accepted |
 | [032](#adr-032-a-public-repository) | The repository is public | Accepted |
+| [033](#adr-033-dev-simulations-are-off-until-switched-on) | DEV simulations are off until switched on | Accepted (design; milestone 10a) |
 
 ---
 
@@ -697,3 +698,34 @@ git-ignored; gitleaks runs over the full history on every change).
 **Rejected.** A `--lite` stack in CI — the HA experiments (replica and broker
 crash) could no longer run there. Paid larger or self-hosted runners — cost, or
 a host that runs pull-request code.
+
+## ADR-033: DEV simulations are off until switched on
+
+**Context.** DEV has the test tooling (ADR-014): simulators, Mailpit, the
+testkit with test data, simulated shoppers and the chaos lab. Until now the
+testkit seeded a shopper account and products at startup and kept topping stock
+up, so every DEV stack was full of made-up data whether anyone wanted it or not.
+A developer working on a feature usually wants an empty system they fill
+themselves; the demonstration wants the full simulation.
+
+**Decision** (owner, 2026-11-17). DEV keeps all of its tooling, but every data
+simulation is off by default and switched on from the ops console: test data,
+simulated shoppers, each chaos actor, and the simulators' faults. Only the DEV
+administrator is created at startup, because it is setup, not data: without it
+nobody could sign in to switch anything on. Switching off stops a simulation and
+keeps what it made. The switches are remembered across restarts; a fresh stack
+starts with all off. Experiments and the verification scripts switch on what they
+need, and experiments restore the switches afterwards. A separate DEMO environment was
+considered and dropped by the owner the same day.
+
+**Consequences.** `stack.sh dev up` gives an empty shop with one administrator.
+The testkit gains a small persisted state (its switches); the console's
+Simulated shoppers page gains a Test data switch. The ledger audit and the
+experiments are unchanged in what they check. Nothing changes outside DEV.
+
+**Rejected.** A DEMO environment holding the tooling while DEV is clean — DEV
+would then lose the simulators and Mailpit, or need sandbox endpoints like INT.
+Deleting a simulation's data when it is switched off — the services have no
+delete APIs for orders or accounts, and data that disappears is not how real
+data behaves.
+
