@@ -16,7 +16,27 @@ and the architecture disagree, the architecture wins — fix this document.
 ## 1. Current state
 
 As of 2026-11-18: **milestones 0–10a are complete**; milestone 11 (load
-baseline) is next.
+baseline) is in progress.
+
+Milestone 11, first local run (2026-11-18 15:00 UTC, Docker Desktop, 22 CPUs,
+11.7 GiB; not yet the baseline of record). Catalog p95 ≤ 9 ms at every rate up to 20
+orders/s. Place → confirmed p95 is 1.9 s at 10/s, 7 s at 15/s and ≥ 30 s at
+20/s. `POST /orders` p95 is 74 ms at 1/s and 0.5–0.6 s from 3/s, with p50
+steady at about 40 ms. The 6/s step is void: the host slept and Prometheus
+has no samples for nine minutes, so `load-baseline.py` now detects a pause and
+runs the step again. The bottleneck is the shared MySQL's commit path, not
+CPU: no service used more than 0.6 cores. The evidence:
+
+- In the order schema, `COMMIT` is p95 182 ms and p99 1 s (performance_schema).
+  Configuration is fully durable (`innodb_flush_log_at_trx_commit=1`,
+  `sync_binlog=1`), and one synchronous 4 KiB write on the Docker Desktop
+  volume takes 12–15 ms.
+- Row-lock waits rise from about 1/s to 15/s with the rate. Every wait sampled
+  is on a hot `inventory.stock` row (about 20 SKUs) or on
+  `shipping.shipments`, held by a transaction that is in `COMMIT`. None is
+  on order's tables.
+- Order's pool (10 per replica) runs out from 15/s: acquire waits reach the
+  2 s timeout, and lag builds in order and then in notification.
 
 Milestone 10a acceptance (2026-11-18): `verify-switches.py` on a fresh DEV
 stack — one account, empty catalog, every switch off, no event written for
