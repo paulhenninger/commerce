@@ -526,7 +526,8 @@ requests and the current Kafka batch (20 s budget), and exits.
 | Pagination capped at 50 per page | list endpoints |
 
 Targets used for alert thresholds and capacity checks (not yet measured — see
-the implementation plan's load-test step): catalog reads p95 < 100 ms at the
+the implementation plan's load-test step; measured locally on the DEV HA stack,
+with a GitHub-runner run optional, [ADR-034](decisions.md#adr-034-the-load-baseline-is-measured-locally-github-is-optional)): catalog reads p95 < 100 ms at the
 edge; `POST /orders` p95 < 250 ms; place → confirmed p95 < 3 s with a healthy
 payment provider.
 

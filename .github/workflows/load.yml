@@ -1,6 +1,7 @@
 name: Load baseline
 
-# The load baseline (milestone 11) on a Linux runner: the DEV stack, then
+# Optional (ADR-034): the baseline of record is measured locally. This runs the
+# load baseline (milestone 11) on a Linux runner for comparison: the DEV stack, then
 # scripts/load-baseline.py stepping the simulated shoppers up to 20 orders/s,
 # with the report uploaded. Not on every change (it takes about 40 minutes):
 # by hand, or by labelling a pull request "load-baseline".

@@ -178,6 +178,17 @@ def main():
     report(started, args, results)
 
 
+def host():
+    """The Docker host the stack ran on, for the report (ADR-034)."""
+    try:
+        out = subprocess.run(['docker', 'info', '--format', '{{.OperatingSystem}}|{{.NCPU}}|{{.MemTotal}}'],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        system, cpus, memory = out.split('|')
+        return f'{system}, {cpus} CPUs, {int(memory) / 2**30:.1f} GiB'
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 'unknown (docker info failed)'
+
+
 def report(started, args, results):
     out = ROOT / 'build/load'
     out.mkdir(parents=True, exist_ok=True)
@@ -185,6 +196,7 @@ def report(started, args, results):
     lines = [f'## Load baseline, {started.strftime("%Y-%m-%d %H:%M")} UTC', '',
              f'DEV stack, ramp {args.ramp} s and measure {args.measure} s per step; customer-side latencies are '
              'measured by the simulated shoppers through the storefront edge.', '',
+             f'Host: {host()}.', '',
              '| Target orders/s | Placed/s | Catalog p95 ms | POST /orders p95 ms | Order GET p95 ms | '
              'Placed → confirmed p95 s | Auth check p95 ms | Checkouts failed % | Service 5xx % | Max lag | '
              'Testkit busy skips/s |',

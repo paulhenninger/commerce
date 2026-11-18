@@ -729,3 +729,29 @@ Deleting a simulation's data when it is switched off — the services have no
 delete APIs for orders or accounts, and data that disappears is not how real
 data behaves.
 
+
+## ADR-034: The load baseline is measured locally; GitHub is optional
+
+**Context.** Milestone 11 measures the latency targets in architecture §8 and
+names the bottleneck by stepping the simulated shoppers up to 20 orders/s
+(`scripts/load-baseline.py`). It can run on the development machine (Docker
+Desktop) or on a GitHub-hosted runner (`load.yml`, 4 CPUs, 16 GB, Linux). The
+HA stack uses about 6.8 GiB at rest, so an 8 GB Docker Desktop is too small
+under load; the development machine now gives Docker Desktop about 11.7 GiB and
+22 CPUs.
+
+**Decision** (owner, 2026-11-18). The baseline of record is measured locally on
+the DEV HA stack, with the host it ran on (Docker Desktop memory and CPUs, OS)
+written into the report beside the numbers. `load.yml` stays as an optional
+extra, run by hand (`workflow_dispatch`) or by labelling a pull request
+`load-baseline`, for a Linux measurement to compare against later. Neither
+runs on every change.
+
+**Consequences.** The numbers describe one Windows/Docker Desktop host, not a
+production host; the report says so, and a bottleneck that is Docker Desktop's
+(its VM, its networking) is named as such. Docker Desktop needs more than 10 GB
+for the run. A GitHub run, when made, is reported beside the local one, not in
+place of it.
+
+**Rejected.** GitHub only — the owner wants the run under their own control.
+Deleting `load.yml` — the owner wants a Linux run possible later.
