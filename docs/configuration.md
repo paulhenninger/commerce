@@ -54,7 +54,7 @@ Every published port is bound to `127.0.0.1`; put a TLS terminator in front.
 | `SIGNUP_CHECK_MX` | Refuse sign-ups whose email domain has no mail server (`false` in DEV: Mailpit has none) |
 | `CORS_ORIGINS` | Default `APP_BASE_URL` plus `PASSKEY_EXTRA_ORIGINS` |
 | `EDGE_API_RATE`, `EDGE_API_BURST` | Storefront edge rate limit per client address: requests per second (default 50) and burst (100) |
-| `DEV_ADMIN_PASSWORD`, `DEV_SHOPPER_PASSWORD` | DEV only: the seeded `admin@example.com` and `shopper@example.com` (and the simulated shoppers) |
+| `DEV_ADMIN_PASSWORD`, `DEV_SHOPPER_PASSWORD` | DEV only: `admin@example.com` (made at startup) and `shopper@example.com` and the simulated shoppers (made when test data and shoppers are switched on, ADR-033) |
 
 ## External systems
 
@@ -97,7 +97,6 @@ what its role needs (ADR-024, `deploy/kafka/`).
 | `TRACE_SAMPLING` | `1.0`; PROD `0.1` | Share of requests traced |
 | `LOG_LEVEL` | `INFO` | Root log level of every service |
 | `ALERTMANAGER_CONFIG` | `deploy/observability/alertmanager/alertmanager.yml` | Alertmanager file with your receivers (pager, chat), kept outside the repository; the default sends alerts only to the ops service |
-| `TESTKIT_SHOPPERS` | `0` | DEV only: simulated shoppers started with the stack (else start them from the console) |
 | `DOCKER_SOCKET_GID` | found by `stack.sh` | DEV only: the group that may use the Docker socket, for `docker-proxy` (`0` on Docker Desktop, the `docker` group's id on Linux) |
 
 ## CD (GitHub)

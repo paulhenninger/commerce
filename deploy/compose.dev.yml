@@ -125,8 +125,11 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?Set BOOTSTRAP_ADMIN_EMAIL}
       DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?Set DEV_ADMIN_PASSWORD}
       DEV_SHOPPER_PASSWORD: ${DEV_SHOPPER_PASSWORD:?Set DEV_SHOPPER_PASSWORD}
-      TESTKIT_SHOPPERS: ${TESTKIT_SHOPPERS:-0}
       OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+    volumes:
+      # The simulation switches (ADR-033): what is on survives a restart; a new
+      # volume (stack.sh dev down -v) starts with everything off.
+      - testkit-state:/var/lib/commerce
     tmpfs:
       - /tmp:size=64m
     mem_limit: 384m
@@ -134,8 +137,8 @@ services:
 
   # The only container that touches the Docker socket (ADR-027): an explicit
   # allowlist (dev/docker-proxy.conf) of listing containers and the six
-  # lifecycle actions. Runs as the image's unprivileged user; group 0 is added
-  # only because the socket is root:root 660. No capabilities, no published
+  # lifecycle actions. Runs as the image's unprivileged user, in the socket's
+  # group only (root on Docker Desktop, "docker" on Linux; see group_add). No capabilities, no published
   # port, and the docker network is its only one.
   docker-proxy:
     <<: *hardened
@@ -266,3 +269,5 @@ networks:
 volumes:
   # The controller's experiment runs and recovery ledger.
   controller-state:
+  # The testkit's simulation switches.
+  testkit-state:

@@ -122,6 +122,12 @@ public class ExperimentRunner {
             safely(testkit::stopAllActors);
             ledger.actors(false);
         }
+        JsonNode switches = ledger.switchesOutstanding();
+        if (switches != null) {
+            safely(() -> testkit.restoreSwitches(switches));
+            ledger.switches(null);
+            log.atWarn().log("Put back the simulation switches an interrupted experiment changed");
+        }
     }
 
     private String serviceOf(String containerId) {
@@ -136,13 +142,39 @@ public class ExperimentRunner {
         run.startedAt = Instant.now();
         run.log("started");
         Context ctx = new Context(run, prometheus, testkit, shop, instances);
+        if (e.needsHa() && !haTopology()) {
+            run.verdict = Run.Verdict.NOT_APPLICABLE;
+            run.log("needs two instances of each service and three brokers (the HA topology)");
+            finish(run);
+            return;
+        }
+        // DEV's simulations are off until someone switches them on (ADR-033). A run
+        // needs test data and shoppers: it notes what was on, switches on what it
+        // needs, and puts every switch back as it found it — also after a crash,
+        // through the recovery ledger.
+        JsonNode switches = null;
+        try {
+            switches = testkit.switches();
+            ledger.switches(switches);
+            testkit.testData(true);
+            Catalogue.waitFor(ctx, () -> testkit.status().path("seeded").asBoolean(), 600, "test data ready");
+            phases(e, run, ctx);
+        } catch (Exception ex) {
+            run.check("experiment ran", false, ex.getMessage());
+        } finally {
+            if (switches != null) {
+                JsonNode before = switches;
+                safely(() -> testkit.restoreSwitches(before));
+                run.log("simulation switches put back");
+            }
+            ledger.switches(null);
+            finish(run);
+        }
+    }
+
+    private void phases(Experiment e, Run run, Context ctx) {
         boolean injected = false;
         try {
-            if (e.needsHa() && !haTopology()) {
-                run.verdict = Run.Verdict.NOT_APPLICABLE;
-                run.log("needs two instances of each service and three brokers (the HA topology)");
-                return;
-            }
             prepare(ctx);
             String refusal = steadyState();
             if (refusal != null) {
@@ -171,8 +203,7 @@ public class ExperimentRunner {
                 }
             }
         }
-        if (run.verdict == Run.Verdict.NOT_APPLICABLE || run.verdict == Run.Verdict.NOT_RUN) {
-            finish(run);
+        if (run.verdict == Run.Verdict.NOT_RUN) {
             return;
         }
         try {
@@ -185,9 +216,6 @@ public class ExperimentRunner {
             e.verify().run(ctx, run);
         } catch (Exception ex) {
             run.check("verdict reached", false, ex.getMessage());
-        } finally {
-            safely(() -> testkit.shoppers(Testkit.STANDARD_LOAD));
-            finish(run);
         }
     }
 

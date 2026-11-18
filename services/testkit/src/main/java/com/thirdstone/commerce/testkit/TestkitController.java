@@ -29,7 +29,8 @@ import java.util.Map;
 /**
  * The testkit's API. Reached only through the ops service's proxy (which checks
  * that the caller is an administrator, in dev): the testkit is on the control
- * network and nothing else can reach it.
+ * network and nothing else can reach it. Everything that switches a simulation
+ * on or off goes through {@link Switches}, which remembers it (ADR-033).
  */
 @RestController
 class TestkitController {
@@ -39,22 +40,30 @@ class TestkitController {
     private final Journal journal;
     private final ContractTap tap;
     private final Seeder seeder;
+    private final Switches switches;
     private final RestClient simulators;
 
+    record TestData(boolean on) {
+    }
+
     TestkitController(Shoppers shoppers, ChaosLab lab, Journal journal, ContractTap tap, Seeder seeder,
-                      RestClient.Builder builder, TestkitProperties props) {
+                      Switches switches, RestClient.Builder builder, TestkitProperties props) {
         this.shoppers = shoppers;
         this.lab = lab;
         this.journal = journal;
         this.tap = tap;
         this.seeder = seeder;
+        this.switches = switches;
         this.simulators = builder.clone().baseUrl(props.simulatorsUrl()).build();
     }
 
     @GetMapping("/status")
     Map<String, Object> status() {
         Map<String, Object> status = new LinkedHashMap<>();
+        status.put("adminReady", seeder.adminReady());
+        status.put("testData", seeder.testData());
         status.put("seeded", seeder.seeded());
+        status.put("switches", switches.state());
         status.put("shoppers", shoppers.status());
         status.put("actors", lab.list());
         status.put("contractViolations", tap.violations());
@@ -63,9 +72,25 @@ class TestkitController {
         return status;
     }
 
+    @GetMapping("/switches")
+    Switches.State switches() {
+        return switches.state();
+    }
+
+    /** The whole state at once: what is on and not listed goes off. */
+    @PutMapping("/switches")
+    Switches.State switches(@RequestBody Switches.State state) {
+        return switches.apply(state);
+    }
+
+    @PutMapping("/test-data")
+    Switches.State testData(@RequestBody TestData body) {
+        return switches.testData(body.on());
+    }
+
     @PutMapping("/shoppers")
     Shoppers.Settings shoppers(@RequestBody Shoppers.Settings settings) {
-        return shoppers.update(settings);
+        return switches.shoppers(settings).shoppers();
     }
 
     @GetMapping("/actors")
@@ -75,17 +100,17 @@ class TestkitController {
 
     @PostMapping("/actors")
     ResponseEntity<Actor.View> start(@RequestBody ChaosLab.Start start) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(lab.start(start));
+        return ResponseEntity.status(HttpStatus.CREATED).body(switches.startActor(start));
     }
 
     @DeleteMapping("/actors/{id}")
     ResponseEntity<Void> stop(@PathVariable String id) {
-        return lab.stop(id) ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
+        return switches.stopActor(id) ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
 
     @DeleteMapping("/actors")
     ResponseEntity<Void> stopAll() {
-        lab.stopAll();
+        switches.stopAllActors();
         return ResponseEntity.noContent().build();
     }
 
@@ -96,10 +121,10 @@ class TestkitController {
 
     @PutMapping("/faults/{target}")
     Object fault(@PathVariable String target, @RequestBody Map<String, Object> setting) {
-        if (!List.of("payment", "carrier").contains(target)) {
+        if (!Switches.FAULT_TARGETS.contains(target)) {
             throw ApiException.notFound("Simulator");
         }
-        return simulators.put().uri("/admin/faults/{t}", target).body(setting).retrieve().body(Object.class);
+        return switches.fault(target, setting);
     }
 
     @GetMapping("/journal")

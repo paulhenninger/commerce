@@ -7,7 +7,7 @@ import tools.jackson.databind.JsonNode;
 import java.time.Instant;
 import java.util.Map;
 
-/** The simulated shoppers and the chaos lab: the traffic and the injected faults of an experiment. */
+/** The testkit: the switches, the simulated shoppers and the chaos lab — an experiment's traffic and injected faults. */
 @Component
 class Testkit {
 
@@ -22,6 +22,20 @@ class Testkit {
 
     JsonNode status() {
         return rest.get().uri("/status").retrieve().body(JsonNode.class);
+    }
+
+    /** What is switched on now: test data, shoppers, actors, faults (ADR-033). */
+    JsonNode switches() {
+        return rest.get().uri("/switches").retrieve().body(JsonNode.class);
+    }
+
+    /** Makes that the state again: what is on and not in it goes off. */
+    void restoreSwitches(JsonNode state) {
+        rest.put().uri("/switches").body(state).retrieve().toBodilessEntity();
+    }
+
+    void testData(boolean on) {
+        rest.put().uri("/test-data").body(Map.of("on", on)).retrieve().toBodilessEntity();
     }
 
     void shoppers(Map<String, Object> settings) {

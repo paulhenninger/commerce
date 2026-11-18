@@ -110,7 +110,7 @@ not exist (ADR-014).
 | `GET /api/v1/ops/experiments/runs` | Every run: verdict (`RUNNING` while queued or running, `PASSED`, `FAILED`, `NOT_RUN` when the system was not in steady state, `NOT_APPLICABLE` when it needs the HA topology), checks, timeline |
 | `GET /api/v1/ops/experiments/runs/{id}` | One run |
 | `GET /api/v1/ops/experiments/runs/{id}/report` | The run as Markdown (what `scripts/prove.sh` saves to `build/proofs/`) |
-| `/api/v1/ops/testkit/**` | The testkit, proxied: `GET status`; `PUT shoppers {count, ordersPerMinute, cancelRate, returnRate, declineRate, outOfStockRate}`; `GET actors`, `POST actors {kind, type, topic, ratePerSecond}`, `DELETE actors/{id}`, `DELETE actors`; `GET faults`, `PUT faults/{payment\|carrier}`; `GET journal` |
+| `/api/v1/ops/testkit/**` | The testkit, proxied. Every simulation is off until switched on and the switches are remembered (ADR-033): `GET status` (with `adminReady`, `testData`, `seeded`, `switches`); `GET switches`, `PUT switches {testData, shoppers, actors, faults}` (the whole state: what is on and not listed goes off); `PUT test-data {on}`; `PUT shoppers {count, ordersPerMinute, cancelRate, returnRate, declineRate, outOfStockRate}`; `GET actors`, `POST actors {kind, type, topic, ratePerSecond}`, `DELETE actors/{id}`, `DELETE actors`; `GET faults`, `PUT faults/{payment\|carrier} {outage, latencyMs, errorRate}`; `GET journal` |
 
 ## Internal
 

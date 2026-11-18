@@ -35,6 +35,9 @@ public class Shoppers {
 
     public record Settings(int count, double ordersPerMinute, double cancelRate, double returnRate,
                            double declineRate, double outOfStockRate) {
+        /** No shopper acts: the default (ADR-033). */
+        public static final Settings OFF = new Settings(0, 0, 0.1, 0.1, 0.05, 0.02);
+
         public Settings {
             if (count < 0 || count > 200 || ordersPerMinute < 0 || ordersPerMinute > 1200) {
                 throw new IllegalArgumentException("count 0-200, ordersPerMinute 0-1200");
@@ -80,7 +83,7 @@ public class Shoppers {
     private final Map<String, Tracked> tracked = new ConcurrentHashMap<>();
     private final Map<String, Long> counts = new ConcurrentHashMap<>();
     private final AtomicInteger next = new AtomicInteger();
-    private volatile Settings settings = new Settings(0, 0, 0.1, 0.1, 0.05, 0.02);
+    private volatile Settings settings = Settings.OFF;
     private double owed;
     private volatile JsonNode catalog;
     private volatile long catalogAt;
@@ -92,9 +95,6 @@ public class Shoppers {
         this.journal = journal;
         this.props = props;
         this.registry = registry;
-        if (props.shoppersAtStart() > 0) {
-            settings = new Settings(props.shoppersAtStart(), props.shoppersAtStart() * 3, 0.1, 0.1, 0.05, 0.02);
-        }
     }
 
     public Settings settings() {
@@ -118,6 +118,12 @@ public class Shoppers {
         Settings s = settings;
         while (ready.size() > s.count()) {
             ready.removeLast();
+        }
+        // Switched off (no shopper left, none being made): start numbering again,
+        // so switching on signs the same sim-<n> accounts back in instead of
+        // signing up new ones every time — each experiment switches them off and on.
+        if (ready.isEmpty() && creating.get() == 0) {
+            next.set(0);
         }
         int missing = s.count() - ready.size() - creating.get();
         for (int i = 0; i < Math.min(missing, 4); i++) {
