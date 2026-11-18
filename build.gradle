@@ -35,6 +35,15 @@ configure(subprojects.findAll { it.path.count(':') == 2 }) {
         imports {
             mavenBom org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES
         }
+        // Kafka's compression codecs, ahead of the BOM until kafka-clients moves:
+        // lz4-java before 1.11.4 runs code from an insecure temporary file
+        // (CVE-2026-106451); snappy-java before 1.1.10.9 overflows or exhausts
+        // memory on malformed input (CVE-2026-93451, CVE-2026-108106). Found by
+        // Trivy (security.yml). Drop a line once the BOM's version is past it.
+        dependencies {
+            dependency 'at.yawk.lz4:lz4-java:1.11.4'
+            dependency 'org.xerial.snappy:snappy-java:1.1.10.9'
+        }
     }
 
     tasks.withType(JavaCompile).configureEach {

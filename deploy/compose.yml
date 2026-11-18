@@ -227,7 +227,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: identity
-    image: commerce-identity:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-identity:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -278,7 +278,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: catalog
-    image: commerce-catalog:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-catalog:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -302,7 +302,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: inventory
-    image: commerce-inventory:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-inventory:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -326,7 +326,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: order
-    image: commerce-order:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-order:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -353,7 +353,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: billing
-    image: commerce-billing:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-billing:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -381,7 +381,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: shipping
-    image: commerce-shipping:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-shipping:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -408,7 +408,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: notification
-    image: commerce-notification:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-notification:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -443,7 +443,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: ops
-    image: commerce-ops:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-ops:${IMAGE_TAG:-local}
     depends_on:
       mysql-init:
         condition: service_completed_successfully
@@ -629,7 +629,7 @@ services:
       args:
         API_RATE: ${EDGE_API_RATE:-50}
         API_BURST: ${EDGE_API_BURST:-100}
-    image: commerce-storefront-web:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-storefront-web:${IMAGE_TAG:-local}
     depends_on:
       identity:
         condition: service_healthy
@@ -660,7 +660,7 @@ services:
     <<: *hardened
     build:
       context: ../web/ops-console
-    image: commerce-ops-web:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-ops-web:${IMAGE_TAG:-local}
     depends_on:
       identity:
         condition: service_healthy

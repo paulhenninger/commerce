@@ -35,6 +35,10 @@ Change a decision by adding a new record that supersedes it, not by editing hist
 | [026](#adr-026-dev-runs-the-ha-topology-by-default) | DEV runs the HA topology by default | Accepted |
 | [027](#adr-027-instance-control-from-the-console) | Instance control from the console through a narrow, dev-only path | Accepted |
 | [028](#adr-028-resilience-is-proven-by-experiments-with-verdicts) | Resilience is proven by experiments with verdicts | Accepted |
+| [029](#adr-029-bounded-password-hashing-in-identity) | Bounded password hashing in identity | Accepted |
+| [030](#adr-030-infrastructure-failures-are-retried-not-dead-lettered) | Infrastructure failures are retried, not dead-lettered | Accepted |
+| [031](#adr-031-refunds-are-queued-and-retried-until-made) | Refunds are queued and retried until made | Accepted |
+| [032](#adr-032-a-public-repository) | The repository is public | Accepted |
 
 ---
 
@@ -669,3 +673,27 @@ the provider refuses for good (it no longer knows the charge, say) is retried
 every 5 min and raises `RefundsStuck` after 15 min for an operator, instead of
 sitting on a dead-letter topic. The ledger audit counts a refund still queued
 after the system settles as a failure.
+
+## ADR-032: A public repository
+
+**Context.** CI must start the DEV HA stack (about 6.8 GiB at rest) and run the
+resilience subset on every change, and the design's CodeQL and dependency
+review workflows (ADR-018) need GitHub's code scanning. On a private repository
+the standard runner has about 7 GB, too little for the HA stack beside the
+build; CodeQL and dependency review need GitHub Advanced Security, which the
+repository did not have; and every minute is billed.
+
+**Decision.** The owner made the repository public (2026-11-17), as Bastion's
+already is. Before the change the whole history was scanned for secrets
+(gitleaks: one finding, a test fixture's made-up edge secret, now allow-listed
+exactly).
+
+**Consequences.** Standard runners (4 CPUs, 16 GB) run the HA stack; CodeQL,
+dependency review and Dependabot alerts work as designed; Actions minutes are
+free. Everything committed, including history and commit author addresses, is
+public: secrets stay out of the repository as before (environment files are
+git-ignored; gitleaks runs over the full history on every change).
+
+**Rejected.** A `--lite` stack in CI — the HA experiments (replica and broker
+crash) could no longer run there. Paid larger or self-hosted runners — cost, or
+a host that runs pull-request code.

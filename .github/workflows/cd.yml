@@ -1,0 +1,128 @@
+name: CD
+
+# Every push to main and every version tag (ADR-018):
+#   ci       the whole of ci.yml, on this commit
+#   images   build every image once, tag it with the commit SHA, push it to GHCR
+#   dev → int → qa → prod
+#            the same images, deployed by deploy.yml over SSH; int runs the
+#            clean-environment smoke; qa and prod wait for their reviewers
+#            (GitHub Environment protection rules); prod only from a version tag
+#
+# An environment is deployed only once it exists: list the configured ones in the
+# repository variable CD_ENVIRONMENTS (e.g. "dev,int"). Until then its job is
+# skipped, and main stays green with CI and the pushed images.
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+# Releases go out in order; a newer push waits for the one before it.
+concurrency:
+  group: cd
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  images:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: tag
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - name: Build every image
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}/
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+        run: scripts/stack.sh dev build --pull
+      - name: Push them
+        env:
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}/
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # Only this repository's images; the third-party ones are pulled by digest.
+          images=$(scripts/stack.sh dev config --images | grep "^$IMAGE_REGISTRY" | sort -u)
+          [ -n "$images" ] || { echo "::error::no images named $IMAGE_REGISTRY…"; exit 1; }
+          { echo "### Images for $IMAGE_TAG"; echo; } >> "$GITHUB_STEP_SUMMARY"
+          for image in $images; do
+            docker push --quiet "$image"
+            echo "- \`$(docker image inspect -f '{{index .RepoDigests 0}}' "$image")\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+          docker logout ghcr.io
+
+  dev:
+    needs: images
+    if: contains(vars.CD_ENVIRONMENTS, 'dev')
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      environment: dev
+      tag: ${{ needs.images.outputs.tag }}
+    secrets: inherit
+
+  # Each later environment needs the one before to have passed — or not to exist
+  # yet (skipped), so int can be set up before dev.
+  int:
+    needs: [images, dev]
+    if: >-
+      always() && needs.images.result == 'success'
+      && (needs.dev.result == 'success' || needs.dev.result == 'skipped')
+      && contains(vars.CD_ENVIRONMENTS, 'int')
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      environment: int
+      tag: ${{ needs.images.outputs.tag }}
+    secrets: inherit
+
+  qa:
+    needs: [images, int]
+    if: >-
+      always() && needs.images.result == 'success'
+      && (needs.int.result == 'success' || needs.int.result == 'skipped')
+      && contains(vars.CD_ENVIRONMENTS, 'qa')
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      environment: qa
+      tag: ${{ needs.images.outputs.tag }}
+    secrets: inherit
+
+  prod:
+    needs: [images, qa]
+    if: >-
+      always() && needs.images.result == 'success'
+      && needs.qa.result == 'success'
+      && startsWith(github.ref, 'refs/tags/v')
+      && contains(vars.CD_ENVIRONMENTS, 'prod')
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      environment: prod
+      tag: ${{ needs.images.outputs.tag }}
+    secrets: inherit

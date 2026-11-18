@@ -1,0 +1,77 @@
+version: 2
+
+# Security updates only (except Docker images, at the end): open-pull-requests-limit
+# 0 turns off the weekly version-update PRs; Dependabot still raises a PR for a
+# vulnerable dependency, using the groups and ignores below.
+updates:
+  # Backend. GitHub cannot read a Gradle build by itself: these alerts and
+  # security PRs exist only because dependency-submission.yml submits the graph.
+  - package-ecosystem: gradle
+    open-pull-requests-limit: 0
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      gradle-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Both SPAs — React, React Router, Vite, TypeScript
+  - package-ecosystem: npm
+    open-pull-requests-limit: 0
+    directories: ["/web/storefront", "/web/ops-console"]
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Workflow actions (checkout, setup-java, setup-node, setup-gradle, CodeQL)
+  - package-ecosystem: github-actions
+    open-pull-requests-limit: 0
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Base images are pinned to a digest, and Docker images get no security
+  # advisories, so version updates are ON for them: it's the only way the pins
+  # move. One grouped PR per directory, which CI and the Security workflow scan
+  # and run. Majors are moved by hand: Java and Node stay on LTS lines (Java 25 →
+  # 29; Node 26 → 28), and nginx on its stable branch (even minor).
+  - package-ecosystem: docker
+    open-pull-requests-limit: 2
+    directories: ["/services", "/web/storefront", "/web/ops-console"]
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      base-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "nginxinc/nginx-unprivileged"
+        update-types: ["version-update:semver-minor"]
+
+  # Compose images: MySQL, Kafka, the observability stack, Mailpit. MySQL stays
+  # on its LTS line (9.7): later versions are dated Innovation releases (26.x)
+  # supported only until the next. Move to the next LTS by hand.
+  - package-ecosystem: docker-compose
+    open-pull-requests-limit: 2
+    directory: /deploy
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      compose-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "mysql"
+        versions: [">= 10"]
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

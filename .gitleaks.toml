@@ -22,4 +22,7 @@ regexes = [
   '''^fedcba9876543210fedcba9876543210$''',
   # AuthFlowIntegrationTest: the password an attacker "knows" in the pre-hijacking test.
   '''^attacker-knows-this-1$''',
+  # CommerceContainers (platform/messaging test fixtures): the edge's shared secret
+  # in integration tests. Real environments generate their own (dev) or must set it.
+  '''^test-edge-secret-0123456789abcdef$''',
 ]

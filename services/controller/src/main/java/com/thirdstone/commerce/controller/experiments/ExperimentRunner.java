@@ -32,6 +32,9 @@ import java.util.concurrent.Executors;
 public class ExperimentRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ExperimentRunner.class);
+    // The services' own consumer groups: lag on a chaos or intruder group is theirs, not the system's.
+    private static final String SERVICE_LAG = "sum(max by (group, topic) (commerce_kafka_consumer_lag"
+            + "{group=~\"catalog|order|inventory|billing|shipping|notification\"}))";
     private static final List<String> SERVICES = List.of("identity", "catalog", "inventory", "order", "billing",
             "shipping", "notification", "ops");
 
@@ -257,7 +260,7 @@ public class ExperimentRunner {
         }
         double outbox = prometheus.scalar("sum(commerce_outbox_pending)");
         double refunds = prometheus.scalar("max(commerce_refunds_pending)");
-        double lag = prometheus.scalar("sum(max by (group, topic) (commerce_kafka_consumer_lag{group=~\"catalog|order|inventory|billing|shipping|notification\"}))");
+        double lag = prometheus.scalar(SERVICE_LAG);
         double email = prometheus.scalar("max(commerce_notifications_oldest_pending_age_seconds)");
         if (outbox != 0) {
             waiting.add((long) outbox + " events in outboxes");
@@ -297,8 +300,23 @@ public class ExperimentRunner {
             run.check("no invalid event was produced", invalidLetters < 0.5,
                     String.format("%.0f invalid records dead-lettered", invalidLetters));
         }
-        run.check("outboxes drained and consumers caught up", prometheus.scalar("sum(commerce_outbox_pending)") == 0,
-                "outbox empty");
+        // Drained, not empty at one instant: with orders paused the testkit still
+        // tops stock up (an event through inventory's outbox every 30 s), and one
+        // sample can land on such a row before its relay sends it. A stuck outbox
+        // or a consumer that stopped stays non-zero for the whole window and fails.
+        double[] last = {Double.NaN, Double.NaN};
+        long until = System.currentTimeMillis() + 30_000;
+        do {
+            last[0] = prometheus.scalar("sum(commerce_outbox_pending)");
+            last[1] = prometheus.scalar(SERVICE_LAG);
+            if (last[0] == 0 && last[1] == 0) {
+                break;
+            }
+            Shop.sleep(3000);
+        } while (System.currentTimeMillis() < until);
+        run.check("outboxes drained and consumers caught up", last[0] == 0 && last[1] == 0,
+                last[0] == 0 && last[1] == 0 ? "outbox empty, no consumer lag"
+                        : String.format("%.0f events in outboxes, consumer lag %.0f after 30 s", last[0], last[1]));
         List<JsonNode> wide = new ArrayList<>();
         testkit.journal(ctx.windowStart.minusSeconds(180), Instant.now()).forEach(wide::add);
         new LedgerAudit(shop, run).audit(LedgerAudit.placed(journal), LedgerAudit.placed(wide).keySet(),

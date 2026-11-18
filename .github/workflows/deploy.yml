@@ -1,0 +1,71 @@
+name: Deploy
+
+# Deploys one environment's host to a release CD has already pushed (called by
+# cd.yml, never on its own). Each environment is a GitHub Environment holding:
+#   variables  DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH (the checkout's directory
+#              on the host, which holds deploy/env/<env>.env)
+#   secrets    DEPLOY_SSH_KEY (a key allowed only to that user), DEPLOY_KNOWN_HOSTS
+#              (the host's key line: the host is verified, never trusted on
+#              first use)
+# and its own protection rules (required reviewers for qa and prod).
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    # One deploy per environment at a time; a newer one waits, never interrupts.
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: SSH to the host
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          [ -n "${{ vars.DEPLOY_HOST }}" ] && [ -n "$KEY" ] && [ -n "$KNOWN_HOSTS" ] \
+            || { echo "::error::${{ inputs.environment }} has no DEPLOY_HOST, DEPLOY_SSH_KEY or DEPLOY_KNOWN_HOSTS"; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host *\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking yes\n  BatchMode yes\n' > ~/.ssh/config
+
+      # Only the deployment files; the host's deploy/env/<env>.env (its secrets)
+      # is not in the repository and is never touched.
+      - name: Copy the deployment files
+        run: tar czf - deploy scripts | ssh "$TARGET" "mkdir -p '$DEPLOY_PATH' && tar xzf - -C '$DEPLOY_PATH'"
+
+      # The job's own token, valid only while this job runs, lets the host pull
+      # the images; it is removed from the host whatever happens.
+      - name: Deploy ${{ inputs.tag }}
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | ssh "$TARGET" "docker login ghcr.io -u '${{ github.actor }}' --password-stdin" >/dev/null
+          ssh "$TARGET" "'$DEPLOY_PATH/scripts/deploy.sh' '${{ inputs.environment }}' '${{ inputs.tag }}'"
+
+      - name: Sign the host out of the registry
+        if: always()
+        run: ssh "$TARGET" "docker logout ghcr.io" >/dev/null 2>&1 || true
