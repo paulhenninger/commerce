@@ -38,6 +38,19 @@ CPU: no service used more than 0.6 cores. The evidence:
 - Order's pool (10 per replica) runs out from 15/s: acquire waits reach the
   2 s timeout, and lag builds in order and then in notification.
 
+Bastion PR #27 (session check in one round trip) was measured against the old
+identity at 3/s and 10/s on the same stack. MySQL sees four fewer `SET`s and
+one fewer read-only `COMMIT` per auth check, which is about 8% of its commits
+at 10/s, but none of those commits fsync. The latency targets did not move
+outside run-to-run noise.
+
+The run found a separate problem. When a step's shoppers all sign in again at
+once (their access tokens expire together), identity can hit its 640 MiB
+`mem_limit` and is killed without a log line: identity-2 at 16:23 UTC, and
+identity-1 at 630 MiB afterwards. The JVM gets 60% of the container for heap
+(371 MiB), about 163 MiB non-heap, thread stacks and a 64 MiB `/tmp` tmpfs, and
+concurrent Argon2id hashes take about 19 MiB of heap each. Open: ask the owner.
+
 Milestone 10a acceptance (2026-11-18): `verify-switches.py` on a fresh DEV
 stack — one account, empty catalog, every switch off, no event written for
 10 min; each switch on and off; a testkit restart keeps them — passed (in two
@@ -60,7 +73,7 @@ environment is listed in `CD_ENVIRONMENTS` yet.
 |---|---|
 | `docs/`, `README.md`, `AGENTS.md` | Design written (this set of documents) |
 | Root Gradle build (`settings.gradle`, `build.gradle`, wrapper 9.8.2) | Working: `platform:core`, `platform:messaging` and `services:identity` compile |
-| `services/identity` | Bastion 2.1.0 renamed (package `com.thirdstone.commerce.identity`, application name `identity`). Added (5.3): `gateway.GatewayAuthController` (`GET /internal/authz[?require=admin]`, refusal reason in `X-Auth-Error`), `ops-requires-mfa` setting, tracing and environment tag in `application.yml`. `./gradlew :services:identity:build`: 93 tests, none skipped. Test-only edits: `MySqlMigrationTest` reads `deploy/mysql/roles.sql` and expects the `<database>_app` login; `application-test.yml` turns trace export off |
+| `services/identity` | Bastion 2.1.0 renamed (package `com.thirdstone.commerce.identity`, application name `identity`). Added (5.3): `gateway.GatewayAuthController` (`GET /internal/authz[?require=admin]`, refusal reason in `X-Auth-Error`), `ops-requires-mfa` setting, tracing and environment tag in `application.yml`. Cherry-picked from Bastion: PR #27, the per-request session check in one round trip (2026-11-18). `./gradlew :services:identity:build`: 95 tests, none skipped. Test-only edits: `MySqlMigrationTest` reads `deploy/mysql/roles.sql` and expects the `<database>_app` login; `application-test.yml` turns trace export off |
 | `web/storefront` | Bastion's account pages plus the shop (5.12): catalog with search and categories (typographic product tiles coloured by category; no product images yet), product, cart (localStorage, guarded), checkout (Idempotency-Key per attempt, handles 409 PRICE_CHANGED, test payment tokens only, see architecture §15), orders, order detail (live progress, cancel, return). Back office: products, stock, order lookup, plus Bastion's users. Errors show the request id; sign-in returns to the page that needed it. nginx edge per 5.12; edge-made errors carry `X-Request-Id` |
 | `platform/core` | Complete (5.1), 25 tests. Also `web.PageRequest`/`PageResponse`, `data.Ids` (ULID-style ids), `data.Sql` (UTC `DATETIME` ↔ `Instant`) |
 | `platform/messaging` | Complete (5.2), 14 integration tests. Infrastructure failures (no database connection or transaction) are retried until they clear, never dead-lettered, and requests get `503` + `Retry-After` (ADR-030). **Test fixtures** (`testFixtures`, used by every event-driven service): `CommerceContainers` (MySQL + Kafka with all topics, shared per JVM), `Edge` (requests as the edge forwards them), `EventBus` (publish events, await what a service announces) |
