@@ -944,7 +944,10 @@ Mailpit) are published on loopback only.
 Every container follows Bastion's hardening: non-root user, read-only root
 filesystem, all capabilities dropped, `no-new-privileges`, memory and PID
 limits, rotated local logs, base images pinned by tag and digest. JVM services
-run with `-XX:MaxRAMPercentage=60 -XX:+ExitOnOutOfMemoryError`.
+run with an explicit heap per service (`JVM_HEAP`: the memory limit minus the
+non-heap and native memory measured under load), compiled code capped at
+64 MiB, and `-XX:+ExitOnOutOfMemoryError`
+([ADR-037](decisions.md#adr-037-every-jvm-service-has-a-measured-memory-budget)).
 
 ### Scaling and availability
 
@@ -977,8 +980,9 @@ you watch and prove rather than assume: the console's Instances page shows every
 replica and broker and can stop, kill, pause or restart each one while the
 simulated shoppers keep ordering, and the Resilience proofs page turns that into
 pass/fail experiments (section 11). Measured: the HA topology uses about 6.4 GiB
-and runs on an 8 GB Docker Desktop; 10 GB leaves headroom for simulated load and
-the chaos lab. `scripts/stack.sh dev --lite up -d` runs single
+at rest and runs on an 8 GB Docker Desktop. Under load every container grows to
+its limit, and the limits add up to about 12.5 GiB, so the load baseline needs
+about 14 GB (ADR-037). `scripts/stack.sh dev --lite up -d` runs single
 instances, with less memory — everything works except the experiments that need a second
 replica or broker, which report "not applicable" instead of running.
 

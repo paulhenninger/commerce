@@ -35,12 +35,14 @@ x-hardened: &hardened
       max-size: 10m
       max-file: "5"
 
-# A JVM service: built from services/Dockerfile, small and bounded.
+# A JVM service: built from services/Dockerfile, small and bounded. Its heap
+# (JVM_HEAP) is the limit minus what it was measured to need outside the heap;
+# change the two together (ADR-037).
 x-jvm: &jvm
   <<: *hardened
   tmpfs:
     - /tmp:size=64m
-  mem_limit: 320m
+  mem_limit: 384m
   pids_limit: 256
 
 # Settings every platform service shares.
@@ -51,6 +53,8 @@ x-service-env: &service-env
   OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
   TRACE_SAMPLING: ${TRACE_SAMPLING:-1.0}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # 384 MiB limit - ~155 MiB non-heap - ~80 MiB native (ADR-037).
+  JVM_HEAP: 144m
 
 x-mysql-image: &mysql-image
   # The current LTS line. After 9.7, MySQL versions are dated Innovation
@@ -270,10 +274,13 @@ services:
       OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
       TRACE_SAMPLING: ${TRACE_SAMPLING:-1.0}
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
-    # Spring Security, Hibernate and up to MAX_CONCURRENT_HASHES Argon2 hashes
-    # (~19 MiB each): 448 MiB thrashed under twenty simulated shoppers. Enough
-    # for 4; PROD runs 8 and raises this (compose.prod.yml, ADR-035).
-    mem_limit: 640m
+      # 768 MiB - ~190 MiB non-heap (Bastion's metaspace is the largest) -
+      # ~100 MiB native. Holds ~200 MiB for the application plus
+      # MAX_CONCURRENT_HASHES x 19 MiB up to PROD's 8 (ADR-035, ADR-037).
+      JVM_HEAP: 464m
+    # 640 MiB was killed under load in DEV with 2 hashes: heap, non-heap and
+    # native memory together outgrew it (ADR-037).
+    mem_limit: 768m
 
   catalog:
     <<: *jvm
@@ -339,6 +346,9 @@ services:
     networks: [edge, data, events, telemetry]
     environment:
       <<: *service-env
+      # 448 MiB - ~155 MiB non-heap - ~80 MiB native: its heap reached
+      # 185 MiB at 15-20 orders/s (ADR-037).
+      JVM_HEAP: 208m
       DB_URL: jdbc:mysql://mysql:3306/orders?sslMode=REQUIRED
       DB_USER: orders_app
       DB_PASSWORD: ${ORDERS_DB_PASSWORD:?Set ORDERS_DB_PASSWORD}
@@ -349,6 +359,7 @@ services:
       ORDER_SAGA_TIMEOUT: ${ORDER_SAGA_TIMEOUT:-2m}
       ORDER_MAX_IN_FLIGHT: ${ORDER_MAX_IN_FLIGHT:-5000}
       RETURN_WINDOW_DAYS: ${RETURN_WINDOW_DAYS:-30}
+    mem_limit: 448m
 
   billing:
     <<: *jvm
@@ -394,6 +405,9 @@ services:
     networks: [edge, data, events, telemetry]
     environment:
       <<: *service-env
+      # 448 MiB - ~155 MiB non-heap - ~80 MiB native: its heap reached
+      # 185 MiB at 15-20 orders/s (ADR-037).
+      JVM_HEAP: 208m
       DB_URL: jdbc:mysql://mysql:3306/shipping?sslMode=REQUIRED
       DB_USER: shipping_app
       DB_PASSWORD: ${SHIPPING_DB_PASSWORD:?Set SHIPPING_DB_PASSWORD}
@@ -404,6 +418,7 @@ services:
       # Required everywhere; outside dev it must be a real carrier.
       CARRIER_URL: ${CARRIER_URL:?Set CARRIER_URL}
       CARRIER_KEY: ${CARRIER_KEY:?Set CARRIER_KEY}
+    mem_limit: 448m
 
   notification:
     <<: *jvm
@@ -543,7 +558,9 @@ services:
       - tempo-data:/var/tempo
     tmpfs:
       - /tmp:size=32m
-    mem_limit: 320m
+    # 320 MiB was killed over and over replaying its WAL after a load run at
+    # full sampling (ADR-037).
+    mem_limit: 512m
     pids_limit: 256
 
   # One of only two containers that may see the Docker socket (read-only): it

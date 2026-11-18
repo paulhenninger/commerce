@@ -48,8 +48,9 @@ EXPOSE 8080 9091
 # service that can actually serve (its database reachable, migrations done).
 HEALTHCHECK --interval=10s --timeout=3s --start-period=90s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:9091/actuator/health/readiness || exit 1
-# Sized for a small container: the heap gets 60% of the memory limit, the rest is
-# for metaspace, threads and buffers. Out of memory means exit and restart, not
-# limp on.
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=60", "-XX:+UseSerialGC", "-XX:+ExitOnOutOfMemoryError", \
-            "-Djava.io.tmpdir=/tmp", "org.springframework.boot.loader.launch.JarLauncher"]
+# Memory is budgeted per service (ADR-037): compose sets the heap (JVM_HEAP)
+# to the container's limit minus the non-heap memory measured under load
+# (metaspace, compiled code capped at 64 MiB) and ~80 MiB of native memory.
+# No heap given is a startup failure, not a guess. Out of memory means exit and
+# restart, not limp on.
+ENTRYPOINT ["sh", "-c", "exec java -Xmx${JVM_HEAP:?Set JVM_HEAP (ADR-037)} -XX:ReservedCodeCacheSize=64m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -Djava.io.tmpdir=/tmp org.springframework.boot.loader.launch.JarLauncher"]

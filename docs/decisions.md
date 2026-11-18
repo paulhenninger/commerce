@@ -41,8 +41,9 @@ Change a decision by adding a new record that supersedes it, not by editing hist
 | [032](#adr-032-a-public-repository) | The repository is public | Accepted |
 | [033](#adr-033-dev-simulations-are-off-until-switched-on) | DEV simulations are off until switched on | Accepted (design; milestone 10a) |
 | [034](#adr-034-the-load-baseline-is-measured-locally-github-is-optional) | The load baseline is measured locally; GitHub is optional | Accepted |
-| [035](#adr-035-the-password-hashing-bound-is-set-per-environment) | The password-hashing bound is set per environment | Accepted |
+| [035](#adr-035-the-password-hashing-bound-is-set-per-environment) | The password-hashing bound is set per environment | Accepted (its heap sizing rule replaced by ADR-037) |
 | [036](#adr-036-the-latency-targets-stay-this-machines-capacity-is-recorded-beside-them) | The latency targets stay; this machine's capacity is recorded beside them | Accepted (capacity filled in from the baseline of record) |
+| [037](#adr-037-every-jvm-service-has-a-measured-memory-budget) | Every JVM service has a measured memory budget | Accepted |
 
 ---
 
@@ -848,3 +849,80 @@ meaning.
 
 **Rejected.** Replacing the targets with the measured numbers. That would
 build Docker Desktop's fsync time into production's alert thresholds.
+
+
+## ADR-037: Every JVM service has a measured memory budget
+
+**Context.** Every JVM service gave its heap 60% of the container's
+`mem_limit` (`-XX:MaxRAMPercentage=60`) and left the other 40% for everything
+else. The milestone 11 run at 17:37 UTC on 2026-11-18 showed that the 40% is
+not enough under load. The kernel of Docker Desktop's VM killed identity six
+times (both replicas at once at 17:51, during the 15/s step, where 26.9% of
+checkouts failed), order and shipping four times, Alloy once and MySQL once,
+and Tempo over a hundred times. Docker did not report the kills, and the
+services logged nothing first. ADR-035's lower hashing bound did not stop
+identity's. Peaks measured during that run (Prometheus):
+
+| Service | Limit | Heap committed | Non-heap committed | Native (RSS − JVM) |
+|---|---|---|---|---|
+| identity | 640 MiB | 371 MiB | 186 MiB (metaspace 139) | ~100 MiB |
+| order | 320 MiB | 185 MiB | 149 MiB | ~78 MiB |
+| shipping | 320 MiB | 146 MiB | 153 MiB | — |
+| billing, catalog, inventory, notification, ops | 320 MiB | 75–96 MiB | 135–152 MiB | — |
+| simulators | 256 MiB | 149 MiB | 91 MiB | — |
+
+Non-heap memory is mostly class metadata (90–140 MiB, fixed once the
+application has started) and compiled code, which grows under load (40–55 MiB).
+Together with native memory (thread stacks, GC and JIT structures) it needs
+about 230 MiB in a 320 MiB container, so a 60% heap cannot fit. Every service
+stood at its limit even after the load stopped. The heap does not shrink, so
+the next burst kills it. Separately, all the limits together (10.9 GiB) came
+within 0.8 GiB of the Docker VM's 11.7 GiB.
+
+**Decision** (owner, 2026-11-18).
+
+1. Each JVM service's heap is set explicitly (`JVM_HEAP`, compose), as its
+   `mem_limit` minus its measured non-heap peak, minus about 80 MiB of native
+   memory (100 MiB for identity), rounded down. The image refuses to start
+   without it. Compiled code is capped at 64 MiB
+   (`-XX:ReservedCodeCacheSize=64m`; peak use was 54 MiB), so non-heap memory
+   has a known ceiling. The rest of the flags are unchanged (`SerialGC`,
+   `ExitOnOutOfMemoryError`).
+2. Limits are raised where the budget does not fit, in every environment,
+   because the need comes from the application and not from the host:
+
+   | Service | `mem_limit` | `JVM_HEAP` |
+   |---|---|---|
+   | identity | 768 MiB (was 640; PROD was already 768) | 464 MiB |
+   | order, shipping | 448 MiB (was 320) | 208 MiB |
+   | billing, catalog, inventory, notification, ops | 384 MiB (was 320) | 144 MiB |
+   | testkit (DEV) | 384 MiB | 176 MiB |
+   | simulators (DEV) | 320 MiB (was 256) | 144 MiB |
+   | controller (DEV) | 320 MiB | 152 MiB |
+   | Tempo | 512 MiB (was 320) | — |
+
+3. The DEV HA stack's limits now add up to about 12.5 GiB. The Docker VM
+   must have more than that for a load run. `load-baseline.py` refuses to
+   start when the running containers' limits exceed the VM's memory
+   (`--overcommit` runs anyway and says so in the report). It also marks a
+   step during which any container was killed or restarted as not a
+   measurement. It does not run such a step again, because the load caused
+   the kill.
+
+**Consequences.** A service killed for memory is now a sizing error to fix
+here, not noise in a run. Heap and limit are two numbers to change together.
+Compose keeps them side by side, and this record holds the measurements they
+came from. On the development machine, Docker Desktop needs about 14 GiB
+(`.wslconfig` `memory=`) for the load baseline; the README asks for 14 GB.
+`glibc`'s `MALLOC_ARENA_MAX` does not apply: the image is Alpine (musl).
+ADR-035's sizing rule ("the heap is 60% of `mem_limit`") is replaced by
+item 1. Its hashing values are unchanged, and PROD's 8 fit identity's 464 MiB
+heap (about 200 MiB + 8 × 19 MiB).
+
+**Rejected.** Only raising the limits and keeping 60%: the heap grows with the
+limit and the non-heap share stays short. A lower percentage for everyone: the
+non-heap need is nearly constant (about 230 MiB) while limits differ, so no
+one percentage fits both a 320 MiB and a 768 MiB container. Capping metaspace:
+it is the application's own classes, so a cap would only turn a kill into an
+`OutOfMemoryError` at the same moment. Cutting DEV's trace sampling to save
+Tempo's memory: DEV keeps full traces for the experiments' evidence.

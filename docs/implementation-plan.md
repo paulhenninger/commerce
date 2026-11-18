@@ -61,6 +61,21 @@ order), and at 17:13 UTC 15,317 were still pending, the oldest 72 minutes old.
 The backlog delays emails only; it holds up no order. The next baseline run
 should report notification's pending count and oldest age per step.
 
+Second run (2026-11-18 17:37 UTC, `MAX_CONCURRENT_HASHES=2`): void, and not the
+baseline of record. The kernel of Docker Desktop's VM killed identity six times
+between 17:40 and 17:51 (both replicas at 17:51, the 15/s step, 26.9% of
+checkouts failed), order and shipping four times (17:55–17:58), Alloy once,
+MySQL once at 18:12 while the backlog drained, and Tempo over a hundred times.
+Docker recorded none of these kills (`OOMKilled` false; `dmesg` in the
+`docker-desktop` distribution has them). The cause was the 60/40 heap split,
+not hashing: non-heap plus native memory needs about 230 MiB, more than 40% of
+any limit up to 640 MiB. Idle fsync was also slower (39 ms against 12–15 ms).
+ADR-037 gives each JVM service a measured heap and raises the limits that did
+not fit. `load-baseline.py` now marks a step during which a container
+restarted, and refuses to start when the containers' limits (now about
+12.5 GiB) exceed the Docker VM's memory. This machine's VM has 11.7 GiB
+(`.wslconfig` `memory=12GB`), so the next run needs about 14 GB first.
+
 Milestone 10a acceptance (2026-11-18): `verify-switches.py` on a fresh DEV
 stack — one account, empty catalog, every switch off, no event written for
 10 min; each switch on and off; a testkit restart keeps them — passed (in two
@@ -398,15 +413,21 @@ Node 22 locally (images build on Node 26). Shell scripts must be LF
 (`.gitattributes`). On Docker Desktop the "cannot reach the internet" checks of
 Bastion's `verify-stack.sh` fail by design; they pass on Linux CI.
 
-**Memory budget (limits).** DEV's default is the HA topology: 2 × 7 replicated
-JVM services at 320 MiB (identity 640), ops 320, testkit 384, controller 256,
-simulators 256, 3 Kafka brokers at 512, MySQL 640, Prometheus/Loki/Tempo/
-Grafana/Alloy 256 each, nginx and small helpers ~250 — about 10.5 GiB of
-*limits*. **Measured (milestone 9)**: the HA topology, all 33 containers, uses
+**Memory budget (limits, ADR-037).** DEV's default is the HA topology, two of
+each service: identity 768 MiB, order and shipping 448, billing, catalog,
+inventory, notification and ops 384; testkit 384, controller 320, simulators
+320; 3 Kafka brokers at 512, MySQL 768, Tempo 512, Prometheus 384, Loki 320,
+Grafana and Alloy 256, nginx and small helpers ~560. That is about 12.5 GiB of
+*limits*, which a load run needs the Docker VM to exceed (`load-baseline.py`
+checks). **Measured (milestone 9)**: the HA topology, all 33 containers, uses
 about 6.4 GiB after a smoke run and starts in under 3 minutes on this machine's
 8 GB Docker Desktop. 10 GB gives headroom for simulated shoppers plus the chaos
 lab; `--lite` (single instances, one broker) needs less (not measured). JVM flags:
-`-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError`.
+`-Xmx${JVM_HEAP} -XX:ReservedCodeCacheSize=64m -XX:+UseSerialGC
+-XX:+ExitOnOutOfMemoryError`. Each service's `JVM_HEAP` sits beside its
+`mem_limit` in compose: the limit minus its measured non-heap peak minus ~80 MiB
+native (ADR-037). Change the two together; the image refuses to start without a
+heap.
 
 ## 5. Module specifications
 

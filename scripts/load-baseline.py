@@ -22,7 +22,14 @@ Each step sets the shoppers' rate, lets it settle (--ramp s), then measures over
 
 A step during which the Docker VM stopped (the host slept: Prometheus has a gap)
 measured nothing; it is run again, up to --retries times, and marked if it never
-ran clean.
+ran clean. A step during which a container was killed or restarted (a memory
+limit, usually) is marked with the containers' names and is not a measurement
+of the system: the load caused it, so it is not run again (ADR-037).
+
+The run refuses to start if the stack's memory limits add up to more than the
+Docker VM has (--overcommit to run anyway, marked in the report): every
+container reaches its limit under load, and an overcommitted VM kills or swaps
+what the limits would have contained.
 
 Writes build/load/baseline-<time>.md and prints the table. Switches test data
 and shoppers on for the run and puts the switches back as it found them.
@@ -119,6 +126,37 @@ def container_cpu():
     return cpu
 
 
+def containers():
+    """Every container of the DEV stack: name -> (restart count, started at, running, memory limit in bytes)."""
+    names = subprocess.run(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=commerce-dev'],
+                           capture_output=True, text=True, timeout=60).stdout.split()
+    if not names:
+        return {}
+    out = subprocess.run(['docker', 'inspect', '--format',
+                          '{{.Name}}|{{.RestartCount}}|{{.State.StartedAt}}|{{.State.Running}}|{{.HostConfig.Memory}}']
+                         + names, capture_output=True, text=True, timeout=60).stdout
+    found = {}
+    for line in out.splitlines():
+        name, restarts, started, running, memory = line.split('|')
+        found[name.lstrip('/').removeprefix('commerce-dev-')] = (int(restarts), started, running == 'true', int(memory))
+    return found
+
+
+def restarted(before, after):
+    """Containers that were running before the step and were restarted or stopped during it."""
+    return sorted(name for name, (restarts, started, running, _) in before.items()
+                  if running and (name not in after or not after[name][2]
+                                  or after[name][0] != restarts or after[name][1] != started))
+
+
+def memory_fit():
+    """(sum of the running containers' memory limits, the Docker VM's memory), in bytes."""
+    limits = sum(memory for _, _, running, memory in containers().values() if running)
+    total = subprocess.run(['docker', 'info', '--format', '{{.MemTotal}}'],
+                           capture_output=True, text=True, timeout=30).stdout.strip()
+    return limits, int(total or 0)
+
+
 def shoppers(rate_per_minute):
     # Enough shoppers that none comes near a per-address limit (one order every
     # few seconds each), within the testkit's bound of 200.
@@ -172,14 +210,21 @@ def run_step(rate, args, w):
         call('PUT', f'{T}/shoppers', shoppers(rate))
         again = f' (again: the stack was paused)' if attempt else ''
         print(f'step {rate}/min ({rate / 60:.1f}/s): ramp {args.ramp} s, measure {args.measure} s{again}', flush=True)
-        began = time.time()
+        began, before = time.time(), containers()
         time.sleep(args.ramp + args.measure)
         late = time.time() - began - (args.ramp + args.measure)
         share = scraped_share(w, args.measure)
+        lost = restarted(before, containers())
         if share >= 0.9 and late < 30:
-            return measure(w, rate), True
+            if lost:
+                print(f"  restarted during the step: {', '.join(lost)}", flush=True)
+            m = measure(w, rate)
+            m['restarted'] = lost
+            return m, True
         print(f'  paused: {100 * share:.0f}% of the window scraped, {late:.0f} s late', flush=True)
-    return measure(w, rate), False
+    m = measure(w, rate)
+    m['restarted'] = []
+    return m, False
 
 
 def main():
@@ -188,9 +233,19 @@ def main():
     parser.add_argument('--ramp', type=int, default=60, help='seconds to settle at each step before measuring')
     parser.add_argument('--measure', type=int, default=180, help='seconds measured at each step')
     parser.add_argument('--retries', type=int, default=2, help='times a step is run again after a pause')
+    parser.add_argument('--overcommit', action='store_true',
+                        help="run although the containers' memory limits exceed the Docker VM's memory")
     args = parser.parse_args()
     steps = [int(s) for s in args.steps.split(',')]
     w = f'{args.measure}s'
+
+    limits, total = memory_fit()
+    args.memory = (f"containers' memory limits {limits / 2**30:.1f} GiB of the VM's {total / 2**30:.1f} GiB"
+                   + (' (overcommitted: --overcommit)' if limits > total else ''))
+    if limits > total and not args.overcommit:
+        print(f'load-baseline: the {args.memory}. Under load every container reaches its limit, so the VM '
+              'would kill or swap; give Docker more memory (ADR-037) or pass --overcommit.', file=sys.stderr)
+        return 2
 
     sign_in()
     before = call('GET', f'{T}/switches')
@@ -243,13 +298,14 @@ def report(started, args, results):
     lines = [f'## Load baseline, {started.strftime("%Y-%m-%d %H:%M")} UTC', '',
              f'DEV stack, ramp {args.ramp} s and measure {args.measure} s per step; customer-side latencies are '
              'measured by the simulated shoppers through the storefront edge.', '',
-             f'Host: {host()}. One synchronous 4 KiB write on the MySQL volume (idle): {fsync_ms()}.', '',
+             f'Host: {host()}; {args.memory}. One synchronous 4 KiB write on the MySQL volume (idle): '
+             f'{fsync_ms()}.', '',
              '| Target orders/s | Placed/s | Catalog p95 ms | POST /orders p95 ms | Order GET p95 ms | '
              'Placed → confirmed p95 s | Auth check p95 ms | Checkouts failed % | Service 5xx % | Max lag | '
              'Testkit busy skips/s | MySQL row-lock wait ms/s | Redo fsyncs/s |',
              '|---|---|---|---|---|---|---|---|---|---|---|---|---|']
     for m in results:
-        paused = '' if m['clean'] else ' (paused)'
+        paused = ('' if m['clean'] else ' (paused)') + (' (restarted)' if m['restarted'] else '')
         lines.append(f"| {m['target_per_s']:.1f}{paused} | {fmt(m['placed_per_s'], 1)} | {fmt(m['catalog_p95_ms'])} | "
                      f"{fmt(m['place_p95_ms'])} | {fmt(m['order_get_p95_ms'])} | {fmt_saga(m['confirmed_p95_s'])} | "
                      f"{fmt(m['authz_p95_ms'], 1)} | {fmt(m['checkout_failed_pct'], 1)} | "
@@ -258,6 +314,9 @@ def report(started, args, results):
     if not all(m['clean'] for m in results):
         lines += ['', '(paused): the Docker VM stopped during every attempt at this step; its numbers are not a '
                       'measurement.']
+    if any(m['restarted'] for m in results):
+        lines += ['', '(restarted): a container was killed or restarted during the step (see below); its numbers '
+                      'measure the failure, not the system (ADR-037).']
     lines += ['', '### Per step: lag, DB pool waits, CPU', '']
     for m in results:
         top = sorted(m['container_cpu'].items(), key=lambda kv: -kv[1])[:6]
@@ -265,6 +324,7 @@ def report(started, args, results):
                      f"pool waits {json.dumps({k: int(v) for k, v in m['pool_pending_max'].items() if v})}; "
                      f"JVM CPU cores {json.dumps({k: round(v, 2) for k, v in m['jvm_cpu_cores'].items()})}; "
                      f"oldest unsent email {m['email_backlog_s']:.0f} s; "
+                     + (f"**restarted: {', '.join(m['restarted'])}**; " if m['restarted'] else '') +
                      f"busiest containers (cores) {', '.join(f'{k} {v:.2f}' for k, v in top)}")
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     print('\n'.join(lines))

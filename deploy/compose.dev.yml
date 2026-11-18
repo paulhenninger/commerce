@@ -51,11 +51,14 @@ services:
       # billing's key and shipping's key.
       SIMULATOR_API_KEY: ${PAYMENT_GATEWAY_KEY:?Set PAYMENT_GATEWAY_KEY},${CARRIER_KEY:?Set CARRIER_KEY}
       OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+      # 320 MiB - ~95 MiB non-heap - ~80 MiB native; its heap reached 121 MiB
+      # under load (ADR-037).
+      JVM_HEAP: 144m
     ports:
       - "127.0.0.1:${SIMULATORS_PORT:-8090}:8080"
     tmpfs:
       - /tmp:size=64m
-    mem_limit: 256m
+    mem_limit: 320m
     pids_limit: 256
 
   billing:
@@ -126,6 +129,8 @@ services:
       DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?Set DEV_ADMIN_PASSWORD}
       DEV_SHOPPER_PASSWORD: ${DEV_SHOPPER_PASSWORD:?Set DEV_SHOPPER_PASSWORD}
       OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+      # 384 MiB - ~130 MiB non-heap - ~80 MiB native (ADR-037).
+      JVM_HEAP: 176m
     volumes:
       # The simulation switches (ADR-033): what is on survives a restart; a new
       # volume (stack.sh dev down -v) starts with everything off.
@@ -188,6 +193,8 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?Set BOOTSTRAP_ADMIN_EMAIL}
       DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?Set DEV_ADMIN_PASSWORD}
       ORDER_SAGA_TIMEOUT: ${ORDER_SAGA_TIMEOUT:-2m}
+      # 320 MiB - ~85 MiB non-heap - ~80 MiB native (ADR-037).
+      JVM_HEAP: 152m
     volumes:
       # Experiment runs and the recovery ledger survive a restart of the controller.
       - controller-state:/var/lib/commerce
