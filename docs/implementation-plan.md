@@ -15,8 +15,17 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-17: **milestones 0–10 are complete**; milestone 10a (DEV
-simulations off by default, ADR-033) is next, then 11.
+As of 2026-11-18: **milestones 0–10a are complete**; milestone 11 (load
+baseline) is next.
+
+Milestone 10a acceptance (2026-11-18): `verify-switches.py` on a fresh DEV
+stack — one account, empty catalog, every switch off, no event written for
+10 min; each switch on and off; a testkit restart keeps them — passed (in two
+runs: the host slept during both). `smoke.sh`, `verify-storefront.py`,
+`verify-testkit.py` passed with nothing switched on by hand. CI (PR #15): every
+check green, `prove.sh --quick` 4 of 4. Locally poison data failed once in a
+stack-wide stall while the Docker VM was swapping after nine hours of runs, and
+passed when run again.
 
 Milestone 10 acceptance (PR #12, a clean Linux clone on GitHub's runners): CI
 green — `./gradlew build` with no test skipped, both SPAs, clean deployments,
