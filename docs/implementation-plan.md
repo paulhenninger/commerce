@@ -15,8 +15,23 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-18: **milestones 0–10a are complete**; milestone 11 (load
-baseline) is in progress.
+As of 2026-11-18: **milestones 0–11 are complete**.
+
+Milestone 11 acceptance: the baseline of record (2026-11-18 20:21 UTC, Docker
+Desktop with 22 CPUs and 13.7 GiB, memory budgets per ADR-037,
+`MAX_CONCURRENT_HASHES=2`) is in architecture §8. Catalog p95 and place →
+confirmed p95 met their targets at every step up to 20 orders/s, the top of the
+run. `POST /orders` p95 met its target up to 15/s (130 ms) and missed it at
+20/s (289 ms). The cause was the shared MySQL's commit path. No checkout
+failed and no service answered 5xx at any step. No container restarted during
+a step: identity held with the hashing bound of 2, so DEV keeps 2. Tempo was
+killed once at its 512 MiB limit about 50 s after the run ended, while it
+worked through the 20/s step's traces (`dmesg`), and restarted. The idle
+fsync took 3.1 ms, against 12–39 ms in the earlier runs, after Docker
+Desktop's VM was enlarged and restarted. The report's "Service 5xx %" column
+read "—" because no 5xx series existed; Prometheus confirmed none in about
+75,000 requests, and `load-baseline.py` now prints 0 in that case. The runs
+below led up to it.
 
 Milestone 11, first local run (2026-11-18 15:00 UTC, Docker Desktop, 22 CPUs,
 11.7 GiB; not yet the baseline of record). Catalog p95 ≤ 9 ms at every rate up to 20
@@ -120,7 +135,7 @@ environment is listed in `CD_ENVIRONMENTS` yet.
 | `services/Dockerfile` | One multi-stage file for every JVM service (`--build-arg SERVICE=…`); compiles once, readiness healthcheck |
 | `docs/identity/` | Bastion's docs, renamed; paths in them still assume Bastion's layout |
 | Root files | `LICENSE`, `SECURITY.md`, `.gitattributes`, `.gitleaks.toml`, `.trivyignore` from Bastion; `.gitignore`, `.dockerignore`. Git repository initialised on `main` |
-| Everything else in section 2 | Done, except milestone 11 (load baseline) |
+| Everything else in section 2 | Done |
 
 Images already pulled on the development machine: `apache/kafka:4.4.0`,
 `prom/prometheus:v3.16.0`, `prom/alertmanager:v0.35.0`, `grafana/grafana:13.3.1`,

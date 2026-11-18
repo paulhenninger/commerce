@@ -531,7 +531,29 @@ with a healthy payment provider. They are production's targets and stay
 fixed ([ADR-036](decisions.md#adr-036-the-latency-targets-stay-this-machines-capacity-is-recorded-beside-them)).
 Beside them, the capacity measured on the development machine (DEV HA stack,
 [ADR-034](decisions.md#adr-034-the-load-baseline-is-measured-locally-github-is-optional)): the highest rate at which each target was met, the host, and the
-bottleneck. These are filled in from milestone 11's baseline of record.
+bottleneck, from milestone 11's baseline of record (2026-11-18 20:21 UTC).
+
+Host: Windows 11, Docker Desktop (WSL 2) with 22 CPUs and 13.7 GiB; the
+stack's memory limits total 12.5 GiB. One synchronous 4 KiB write on the MySQL
+volume takes 3.1 ms when idle, against well under 1 ms on a Linux NVMe disk.
+Steps of 1, 3, 6, 10, 15 and 20 orders/s; each ramps for 60 s and is measured
+for 180 s. Simulated shoppers measure the latencies through the storefront edge.
+
+| Target | Met up to | p95 at the top rate met → first rate missed | What ended it |
+|---|---|---|---|
+| Catalog reads p95 < 100 ms | 20 orders/s, the highest rate run | 2 ms at 20/s | Not reached: catalog p95 stayed ≤ 3 ms at every step |
+| `POST /orders` p95 < 250 ms | 15 orders/s | 130 ms at 15/s → 289 ms at 20/s | The shared MySQL's commit path, partly Docker Desktop's volume (below) |
+| Place → confirmed p95 < 3 s | 20 orders/s, the highest rate run | 1.17 s at 20/s | Not reached; p95 rose from 0.49 s at 15/s |
+
+At 20 orders/s no checkout failed and no service answered 5xx. No container
+restarted during a step, and no service used more than 0.5 of a core. Two
+signs show the commit path saturating. Redo-log fsyncs level off (195, 234
+and 244 per second at 10, 15 and 20/s) while the commit rate keeps rising, so
+more commits wait for each shared fsync. MySQL row-lock wait goes from 36 to
+167 ms per second between 15 and 20/s. Order's connection pool runs short
+(up to 25 requests waiting) and its consumer lag peaks at 82. Email is
+outside these targets but behind them: the oldest unsent email was 93 s old at
+10/s and 383 s old at 20/s, because Mailpit takes about 15 emails/s.
 
 ## 9. Observability
 

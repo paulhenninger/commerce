@@ -178,7 +178,8 @@ def measure(w, rate):
     m['authz_p95_ms'] = 1000 * scalar(
         f'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{{service="identity",uri="/internal/authz"}}[{w}])))')
     m['service_5xx_pct'] = 100 * scalar(
-        f'sum(rate(http_server_requests_seconds_count{{job="services",status=~"5.."}}[{w}])) '
+        # No 5xx series at all means none were answered: 0, not "no data".
+        f'(sum(rate(http_server_requests_seconds_count{{job="services",status=~"5.."}}[{w}])) or vector(0)) '
         f'/ sum(rate(http_server_requests_seconds_count{{job="services"}}[{w}]))')
     m['lag_max'] = by(f'max by (group) (max_over_time(commerce_kafka_consumer_lag{{group=~"{"|".join(SERVICES[1:])}"}}[{w}]))', 'group')
     m['pool_pending_max'] = by(f'max by (service) (max_over_time(hikaricp_connections_pending{{job="services"}}[{w}]))', 'service')

@@ -42,7 +42,7 @@ Change a decision by adding a new record that supersedes it, not by editing hist
 | [033](#adr-033-dev-simulations-are-off-until-switched-on) | DEV simulations are off until switched on | Accepted (design; milestone 10a) |
 | [034](#adr-034-the-load-baseline-is-measured-locally-github-is-optional) | The load baseline is measured locally; GitHub is optional | Accepted |
 | [035](#adr-035-the-password-hashing-bound-is-set-per-environment) | The password-hashing bound is set per environment | Accepted (its heap sizing rule replaced by ADR-037) |
-| [036](#adr-036-the-latency-targets-stay-this-machines-capacity-is-recorded-beside-them) | The latency targets stay; this machine's capacity is recorded beside them | Accepted (capacity filled in from the baseline of record) |
+| [036](#adr-036-the-latency-targets-stay-this-machines-capacity-is-recorded-beside-them) | The latency targets stay; this machine's capacity is recorded beside them | Accepted (capacity recorded in architecture §8) |
 | [037](#adr-037-every-jvm-service-has-a-measured-memory-budget) | Every JVM service has a measured memory budget | Accepted |
 
 ---
