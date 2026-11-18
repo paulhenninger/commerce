@@ -16,10 +16,12 @@ import java.time.Instant;
 import java.util.Optional;
 
 /**
- * Charges and refunds. Each operation is in two halves (see EventRouter): the call
- * to the provider happens first, outside any transaction and keyed by the order
- * so it is safe to repeat; then one transaction records the outcome and announces
- * it. No database transaction is ever held open across a network call.
+ * Charges and refunds. A charge is in two halves (see EventRouter): the call to
+ * the provider happens first, outside any transaction and keyed by the order so
+ * it is safe to repeat; then one transaction records the outcome and announces
+ * it. A refund is queued in the event's transaction and made by RefundWorker,
+ * which retries until the provider takes it. No database transaction is ever
+ * held open across a network call.
  */
 @Service
 public class BillingService {
@@ -35,17 +37,6 @@ public class BillingService {
         }
 
         record Called(PaymentGatewayClient.ChargeResult result) implements ChargeDecision {
-        }
-    }
-
-    sealed interface RefundDecision {
-        record NoPayment() implements RefundDecision {
-        }
-
-        record NothingToRefund() implements RefundDecision {
-        }
-
-        record Refunded(Payment payment, String refundRef) implements RefundDecision {
         }
     }
 
@@ -120,45 +111,39 @@ public class BillingService {
 
     // ----------------------------------------------------------------- refund
 
-    RefundDecision prepareRefund(String orderId) {
-        Optional<Payment> payment = payments.findByOrder(orderId);
-        if (payment.isEmpty()) {
-            return new RefundDecision.NoPayment();
-        }
-        Payment p = payment.get();
-        if (!"AUTHORIZED".equals(p.status())) {
-            return new RefundDecision.NothingToRefund();
-        }
-        return new RefundDecision.Refunded(p, gateway.refund(orderId, p.providerRef(), p.amountCents()));
-    }
-
     /**
+     * The order was cancelled or returned: queue the refund of its charge, in
+     * this transaction; {@link RefundWorker} makes it.
+     *
      * @param cancellation true for {@code order.cancelled}: with no payment yet, a
      *                     CANCELLED marker makes the charge request that may still
      *                     be on its way a no-op
      */
-    void recordRefund(String orderId, long userId, long amountCents, String currency, RefundDecision decision,
-                      boolean cancellation) {
-        switch (decision) {
-            case RefundDecision.NoPayment none -> {
-                if (cancellation && payments.insert(Ids.next(), orderId, userId, amountCents, currency, "CANCELLED",
-                        null, null) == 1) {
-                    return;
-                }
-                EventContext.ignored("no payment");
-            }
-            case RefundDecision.NothingToRefund nothing -> EventContext.ignored("nothing to refund");
-            case RefundDecision.Refunded(Payment p, String refundRef) -> {
-                if (payments.markRefunded(orderId, refundRef) == 0) {
-                    EventContext.ignored("already refunded");
-                    return;
-                }
-                outbox.append(Topics.BILLING, BillingEvents.REFUNDED, orderId,
-                        new BillingEvents.Refunded(orderId, p.id(), p.amountCents(), p.currency()));
-                Counter.builder("commerce.payments").tag("outcome", "refunded").register(registry).increment();
-                log.atInfo().addKeyValue("orderId", orderId).log("Payment refunded");
-            }
+    void requestRefund(String orderId, long userId, long amountCents, String currency, boolean cancellation) {
+        if (payments.requestRefund(orderId) == 1) {
+            log.atInfo().addKeyValue("orderId", orderId).log("Refund queued");
+            return;
         }
+        if (payments.findByOrder(orderId).isEmpty()) {
+            if (cancellation && payments.insert(Ids.next(), orderId, userId, amountCents, currency, "CANCELLED",
+                    null, null) == 1) {
+                return;
+            }
+            EventContext.ignored("no payment");
+            return;
+        }
+        EventContext.ignored("nothing to refund");
+    }
+
+    /** The provider took the refund: record it and announce it, once. */
+    void refunded(Payment p, String refundRef) {
+        if (payments.markRefunded(p.orderId(), refundRef) == 0) {
+            return;
+        }
+        outbox.append(Topics.BILLING, BillingEvents.REFUNDED, p.orderId(),
+                new BillingEvents.Refunded(p.orderId(), p.id(), p.amountCents(), p.currency()));
+        Counter.builder("commerce.payments").tag("outcome", "refunded").register(registry).increment();
+        log.atInfo().addKeyValue("orderId", p.orderId()).log("Payment refunded");
     }
 
     public java.util.List<Payment> search(String orderId, Instant from, Instant to) {

@@ -11,6 +11,16 @@ groups:
           summary: Orders are stuck waiting for stock or payment
           description: "The oldest order in flight is {{ $value | humanizeDuration }} old."
           runbook_url: docs/operations.md#runbook-stuck-orders
+      - alert: RefundsStuck
+        # Refunds are retried until the provider takes them (ADR-031); one waiting
+        # this long means the provider has been away or refusing for a while.
+        expr: max(commerce_refunds_oldest_pending_age_seconds) > 900
+        for: 5m
+        labels: {severity: critical, service: billing}
+        annotations:
+          summary: Refunds are waiting for the payment provider
+          description: "The oldest queued refund has waited {{ $value | humanizeDuration }}."
+          runbook_url: docs/operations.md#runbook-external-dependency-down
       - alert: OrderCancellationSpike
         expr: |
           sum(increase(commerce_orders_total{outcome="cancelled"}[10m]))

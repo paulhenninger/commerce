@@ -25,6 +25,7 @@ export function Rail() {
           <ul className="rail-links">
             <li><NavLink to="/simulator">Simulated shoppers</NavLink></li>
             <li><NavLink to="/chaos">Chaos lab</NavLink></li>
+            {config.experiments && <li><NavLink to="/proofs">Resilience proofs</NavLink></li>}
           </ul>
         </>
       )}

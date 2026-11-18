@@ -254,7 +254,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (openssl rand -base64 32)}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?Set DATA_ENCRYPTION_KEY (openssl rand -base64 32)}
       APP_BASE_URL: ${APP_BASE_URL:?Set APP_BASE_URL}
-      CORS_ORIGINS: ${CORS_ORIGINS:-${APP_BASE_URL}}
+      # The shop and the ops console: both edges forward sign-in to identity, which
+      # sees the browser's origin. Blank entries are ignored.
+      CORS_ORIGINS: ${CORS_ORIGINS:-${APP_BASE_URL},${PASSKEY_EXTRA_ORIGINS:-}}
       PASSKEY_EXTRA_ORIGINS: ${PASSKEY_EXTRA_ORIGINS:-}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       # The edges reset X-Forwarded-For, so identity may trust it.

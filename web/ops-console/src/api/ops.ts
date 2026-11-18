@@ -10,6 +10,7 @@ export interface OpsConfig {
   services: string[];
   replayRequiresMfa: boolean;
   instanceControl: boolean;
+  experiments: boolean;
 }
 
 export interface InstanceRow {
@@ -204,6 +205,10 @@ export const ops = {
       method: 'POST',
       body: JSON.stringify({ partition, offset }),
     }),
+  experiments: () => api<ExperimentEntry[]>(`${OPS}/experiments`),
+  runs: () => api<{ current: string; runs: ExperimentRun[] }>(`${OPS}/experiments/runs`),
+  runExperiments: (names: string[]) =>
+    api<ExperimentRun[]>(`${OPS}/experiments/run`, { method: 'POST', body: JSON.stringify({ names }) }),
   instances: () => api<Instances>(`${OPS}/instances`),
   act: (id: string, action: string) =>
     api<{ name: string; state: string }>(`${OPS}/instances/${encodeURIComponent(id)}/${action}`, { method: 'POST' }),
@@ -279,4 +284,26 @@ export function openLiveFeed(onTick: (tick: Tick) => void, onState: (connected: 
     stopped = true;
     controller?.abort();
   };
+}
+
+export interface ExperimentEntry {
+  name: string;
+  title: string;
+  hypothesis: string;
+  needsHa: boolean;
+  observeSeconds: number;
+}
+
+export type Verdict = 'RUNNING' | 'PASSED' | 'FAILED' | 'NOT_RUN' | 'NOT_APPLICABLE';
+
+export interface ExperimentRun {
+  id: string;
+  experiment: string;
+  title: string;
+  hypothesis: string;
+  startedAt: string;
+  endedAt: string | null;
+  verdict: Verdict;
+  timeline: { at: string; text: string }[];
+  checks: { name: string; passed: boolean; detail: string | null }[];
 }

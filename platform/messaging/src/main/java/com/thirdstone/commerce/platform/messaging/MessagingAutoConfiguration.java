@@ -32,6 +32,7 @@ import javax.sql.DataSource;
         KafkaAutoConfiguration.class})
 @ConditionalOnBean({DataSource.class, KafkaTemplate.class})
 @EnableScheduling
+@org.springframework.context.annotation.Import(DatabaseUnavailableHandler.class)
 public class MessagingAutoConfiguration {
 
     @Bean

@@ -33,9 +33,14 @@ class ProblemProducer extends Actor {
     private final KafkaClients clients;
     private final EventCodec codec;
     private EventEnvelope duplicate;
+    /** DUPLICATE: real records to deliver again, byte for byte, in a loop. */
+    private final List<com.thirdstone.commerce.testkit.kafka.ContractTap.Recent> replay;
+    private int next;
 
-    ProblemProducer(String id, Type type, String topic, double rate, KafkaClients clients, EventCodec codec) {
+    ProblemProducer(String id, Type type, String topic, double rate, KafkaClients clients, EventCodec codec,
+                    List<com.thirdstone.commerce.testkit.kafka.ContractTap.Recent> replay) {
         super(id, "producer", type.name(), topic, rate);
+        this.replay = replay;
         this.kindOf = type;
         this.clients = clients;
         this.codec = codec;
@@ -71,6 +76,13 @@ class ProblemProducer extends Actor {
             case INVALID_SCHEMA -> codec.serialize(codec.create(orphanType(), key, "chaos", Map.of("unexpected", true)));
             case UNKNOWN_TYPE -> codec.serialize(codec.create("chaos.something-new", key, "chaos", Map.of("x", 1)));
             case DUPLICATE -> {
+                if (!replay.isEmpty()) {
+                    // A real event the services have already applied, delivered again.
+                    var again = replay.get(next++ % replay.size());
+                    key = again.key();
+                    yield again.value();
+                }
+                // Nothing real seen yet: the same harmless event, again and again.
                 if (duplicate == null) {
                     duplicate = codec.create(orphanType(), key, "chaos", orphanPayload(key));
                 }

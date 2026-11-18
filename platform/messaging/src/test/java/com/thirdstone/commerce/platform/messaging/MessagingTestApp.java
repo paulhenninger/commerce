@@ -35,6 +35,7 @@ public class MessagingTestApp {
 
         public final List<Applied> applied = new CopyOnWriteArrayList<>();
         public final AtomicInteger failingAttempts = new AtomicInteger();
+        public final AtomicInteger transientAttempts = new AtomicInteger();
         public final List<ConsumerRecord<String, byte[]>> deadLetters = new CopyOnWriteArrayList<>();
 
         private final EventDispatcher dispatcher;
@@ -50,6 +51,10 @@ public class MessagingTestApp {
             if ("fail".equals(payload.mode())) {
                 failingAttempts.incrementAndGet();
                 throw new IllegalStateException("handler cannot process this event");
+            }
+            if ("transient".equals(payload.mode()) && transientAttempts.incrementAndGet() <= 5) {
+                // As if the database were away for a while.
+                throw new org.springframework.jdbc.CannotGetJdbcConnectionException("database unavailable");
             }
             if ("ignore".equals(payload.mode())) {
                 EventContext.ignored("test");

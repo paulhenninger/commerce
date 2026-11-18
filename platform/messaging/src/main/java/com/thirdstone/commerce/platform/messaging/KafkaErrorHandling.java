@@ -53,7 +53,40 @@ public final class KafkaErrorHandling {
             publisher.accept(record, e);
         }, backOff);
         handler.addNotRetryableExceptions(InvalidEventException.class);
+        // The service's own infrastructure is away (no database connection, no
+        // transaction): the event is fine and will apply once it is back, so it
+        // is retried — 1 s, doubling to 30 s — for as long as that takes, never
+        // dead-lettered. Without this a 20-second database outage would park
+        // every event in flight on the dead-letter topic.
+        handler.setBackOffFunction((record, e) -> transientInfrastructure(e) ? untilBack() : null);
         return handler;
+    }
+
+    static org.springframework.util.backoff.BackOff untilBack() {
+        var backOff = new org.springframework.util.backoff.ExponentialBackOff(1000, 2);
+        backOff.setMaxInterval(30_000);
+        backOff.setMaxElapsedTime(Long.MAX_VALUE);
+        return backOff;
+    }
+
+    /** True when the failure is the service's own infrastructure, not the event or the handler's logic. */
+    static boolean transientInfrastructure(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof InvalidEventException) {
+                return false;
+            }
+            if (t instanceof org.springframework.dao.TransientDataAccessException
+                    || t instanceof org.springframework.dao.DataAccessResourceFailureException
+                    || t instanceof org.springframework.transaction.CannotCreateTransactionException
+                    || t instanceof java.sql.SQLTransientException
+                    || t instanceof java.sql.SQLRecoverableException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     private static boolean invalid(Throwable e) {

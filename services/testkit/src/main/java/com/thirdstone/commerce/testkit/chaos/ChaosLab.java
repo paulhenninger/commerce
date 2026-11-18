@@ -34,7 +34,11 @@ public class ChaosLab implements DisposableBean {
     private final AtomicInteger next = new AtomicInteger();
     private final MultiGauge records;
 
-    ChaosLab(KafkaClients clients, EventCodec codec, MeterRegistry registry) {
+    private final com.thirdstone.commerce.testkit.kafka.ContractTap tap;
+
+    ChaosLab(KafkaClients clients, EventCodec codec, MeterRegistry registry,
+             com.thirdstone.commerce.testkit.kafka.ContractTap tap) {
+        this.tap = tap;
         this.clients = clients;
         this.codec = codec;
         this.records = MultiGauge.builder("commerce.testkit.actor.records").register(registry);
@@ -63,7 +67,7 @@ public class ChaosLab implements DisposableBean {
                 ProblemProducer.checkTopic(type, s.topic());
                 // An oversized record is 2 MiB: a handful a second is plenty.
                 actor = new ProblemProducer(id, type, s.topic(), type == ProblemProducer.Type.OVERSIZED ? Math.min(rate, 5) : rate,
-                        clients, codec);
+                        clients, codec, type == ProblemProducer.Type.DUPLICATE ? tap.recent(s.topic(), 200) : java.util.List.of());
             }
         } else if ("consumer".equals(s.kind())) {
             actor = new ProblemConsumer(id, ProblemConsumer.Type.valueOf(s.type()), s.topic(), clients);

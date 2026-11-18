@@ -19,14 +19,10 @@ class BillingEventListener {
         this.router = EventRouter.forConsumer("billing")
                 .onWithPreparation(OrderEvents.PAYMENT_REQUESTED, OrderEvents.PaymentRequested.class,
                         (e, p) -> billing.prepareCharge(p), (e, p, decision) -> billing.recordCharge(p, decision))
-                .onWithPreparation(OrderEvents.CANCELLED, OrderEvents.Cancelled.class,
-                        (e, p) -> billing.prepareRefund(p.orderId()),
-                        (e, p, decision) -> billing.recordRefund(p.orderId(), p.userId(), p.totalCents(), p.currency(),
-                                decision, true))
-                .onWithPreparation(OrderEvents.RETURNED, OrderEvents.Returned.class,
-                        (e, p) -> billing.prepareRefund(p.orderId()),
-                        (e, p, decision) -> billing.recordRefund(p.orderId(), p.userId(), p.totalCents(), p.currency(),
-                                decision, false));
+                .on(OrderEvents.CANCELLED, OrderEvents.Cancelled.class,
+                        (e, p) -> billing.requestRefund(p.orderId(), p.userId(), p.totalCents(), p.currency(), true))
+                .on(OrderEvents.RETURNED, OrderEvents.Returned.class,
+                        (e, p) -> billing.requestRefund(p.orderId(), p.userId(), p.totalCents(), p.currency(), false));
     }
 
     @KafkaListener(topics = Topics.ORDER, groupId = "billing")

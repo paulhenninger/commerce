@@ -262,3 +262,8 @@ form button { margin-top: 0.75rem; }
 @media (prefers-reduced-motion: reduce) {
   .map-pulse { display: none; }
 }
+
+/* Resilience proofs: a run's title opens its evidence. */
+button.link { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 0.2em; cursor: pointer; }
+.run-detail { margin-top: 0.75rem; max-width: 72rem; }
+.run-detail .table { margin-bottom: 0.75rem; }

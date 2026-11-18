@@ -227,8 +227,22 @@ public class Shoppers {
                 "paymentMethod", declined ? "tok_decline" : "tok_visa",
                 "expectedTotalCents", total);
         String key = UUID.randomUUID().toString();
-        Storefront.Answer answer = authed(shopper, () -> storefront.call("POST", "/api/v1/orders", shopper.ip,
-                shopper.token, order, Map.of("Idempotency-Key", key)));
+        java.util.function.Supplier<Storefront.Answer> checkout = () -> {
+            try {
+                return storefront.call("POST", "/api/v1/orders", shopper.ip, shopper.token, order,
+                        Map.of("Idempotency-Key", key));
+            } catch (RuntimeException e) {
+                return new Storefront.Answer(0, null);   // No answer at all (connection lost).
+            }
+        };
+        Storefront.Answer answer = authed(shopper, checkout);
+        if (answer.status() == 0 || answer.status() == 502 || answer.status() == 503 || answer.status() == 504) {
+            // As a browser's checkout does: one retry with the same key, which
+            // returns the first order if the first attempt did get through.
+            journal.record(shopper.email, "order.placed", null, "retrying", "first attempt: " + answer.status());
+            Accounts.sleep(1000);
+            answer = authed(shopper, checkout);
+        }
         if (answer.status() == 202) {
             String id = answer.text("id");
             count("order", "placed");

@@ -31,7 +31,9 @@ FROM eclipse-temurin:25.0.5_8-jre-alpine@sha256:56f273059de6b13a6b49fe0ded691ed2
 # healthcheck uses busybox wget, which Alpine has built in.
 RUN apk upgrade --no-cache \
  && addgroup -S -g 10001 commerce \
- && adduser -S -u 10001 -G commerce -H -s /sbin/nologin commerce
+ && adduser -S -u 10001 -G commerce -H -s /sbin/nologin commerce  && install -d -o 10001 -g 10001 -m 700 /var/lib/commerce
+# /var/lib/commerce: state for a service that mounts a volume there (only the
+# DEV controller does: its experiment runs and recovery ledger).
 WORKDIR /app
 # Root-owned and read-only to the app: it needs to read its code, never write it.
 COPY --from=extract /extracted/dependencies/ ./

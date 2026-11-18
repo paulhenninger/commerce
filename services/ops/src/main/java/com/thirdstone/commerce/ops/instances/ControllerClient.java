@@ -39,6 +39,38 @@ public class ControllerClient {
         }
     }
 
+    /** The resilience experiments (DEV only): read. */
+    public JsonNode experiments(String path) {
+        return call(() -> rest.get().uri("/experiments" + path).retrieve().body(JsonNode.class));
+    }
+
+    public String experimentReport(String id) {
+        return call(() -> rest.get().uri("/experiments/runs/{id}/report", id).retrieve().body(String.class));
+    }
+
+    /** Starts experiments; answers the queued runs. */
+    public JsonNode startExperiments(String path, Object body, String actor) {
+        return call(() -> rest.post().uri("/experiments" + path).header("X-Commerce-Actor", actor)
+                .body(body == null ? java.util.Map.of() : body).retrieve().body(JsonNode.class));
+    }
+
+    private <T> T call(java.util.function.Supplier<T> request) {
+        if (rest == null) {
+            throw ApiException.notFound("Experiments");
+        }
+        try {
+            return request.get();
+        } catch (HttpStatusCodeException e) {
+            if (e.getStatusCode().value() == 404) {
+                throw ApiException.notFound("Experiment");
+            }
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "The controller refused (" + e.getStatusCode().value() + ")",
+                    "CONTROLLER_REFUSED");
+        } catch (RestClientException e) {
+            throw ApiException.unavailable("The controller is not answering");
+        }
+    }
+
     JsonNode act(String id, String action, String actor) {
         if (rest == null) {
             throw ApiException.notFound("Instance control");

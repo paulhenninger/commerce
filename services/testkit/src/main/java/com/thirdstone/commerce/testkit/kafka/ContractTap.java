@@ -34,6 +34,13 @@ public class ContractTap implements SmartLifecycle {
     private final MeterRegistry registry;
     private final Map<String, Long> violations = new ConcurrentHashMap<>();
     private final Map<String, Long> checked = new ConcurrentHashMap<>();
+    /** The last real, valid records seen on each topic, for the DUPLICATE producer to replay. */
+    private final Map<String, java.util.Deque<Recent>> recent = new ConcurrentHashMap<>();
+    private static final int RECENT = 500;
+
+    /** A record exactly as a service wrote it. */
+    public record Recent(String key, byte[] value) {
+    }
     private volatile boolean running;
     private Thread thread;
 
@@ -49,6 +56,18 @@ public class ContractTap implements SmartLifecycle {
 
     public Map<String, Long> checked() {
         return Map.copyOf(checked);
+    }
+
+    /** Up to {@code limit} of the latest real records on a topic, oldest first. */
+    public java.util.List<Recent> recent(String topic, int limit) {
+        java.util.Deque<Recent> q = recent.get(topic);
+        if (q == null) {
+            return java.util.List.of();
+        }
+        synchronized (q) {
+            java.util.List<Recent> all = new java.util.ArrayList<>(q);
+            return all.subList(Math.max(0, all.size() - limit), all.size());
+        }
     }
 
     @Override
@@ -115,6 +134,15 @@ public class ContractTap implements SmartLifecycle {
             problem = e.getMessage();
         }
         checked.merge(r.topic(), 1L, Long::sum);
+        if (problem == null && producer.equals("real")) {
+            java.util.Deque<Recent> q = recent.computeIfAbsent(r.topic(), t -> new java.util.ArrayDeque<>());
+            synchronized (q) {
+                q.addLast(new Recent(r.key(), r.value()));
+                while (q.size() > RECENT) {
+                    q.removeFirst();
+                }
+            }
+        }
         if (problem != null) {
             violations.merge(producer + " " + r.topic() + " " + type, 1L, Long::sum);
             Counter.builder("commerce.contract.violations").tag("topic", r.topic()).tag("type", type)

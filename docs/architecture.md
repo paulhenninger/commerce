@@ -355,13 +355,18 @@ for whatever it had done:
 | Service | Compensation |
 |---|---|
 | inventory | reservation `RESERVED` → release; `COMMITTED` → restock |
-| billing | payment `AUTHORIZED` → refund, emit `payment.refunded` |
+| billing | payment `AUTHORIZED` → `REFUND_PENDING`; the refund worker refunds it and emits `payment.refunded` |
 | shipping | shipment not yet dispatched → `CANCELLED` |
 
 Because `order.payment-requested` and `order.cancelled` share a topic and key,
 billing always sees them in order: a cancellation that arrives after the charge
 refunds it; one that arrives before leaves a `CANCELLED` marker that makes the
-later charge request a no-op. If the carrier dispatches before shipping sees the
+later charge request a no-op. A refund is queued in the handler's transaction
+and made by billing's refund worker, outside any transaction, retried (5 s
+doubling to 5 min) until the provider takes it
+([ADR-031](decisions.md#adr-031-refunds-are-queued-and-retried-until-made)): a
+provider outage delays a refund, never loses it, and never blocks the charges
+behind it on the partition. If the carrier dispatches before shipping sees the
 cancellation, `shipment.dispatched` reaches an order that is already cancelled
 and is ignored; the parcel is then handled as a return by support (out of scope).
 
@@ -446,7 +451,12 @@ nightly: an event that old can no longer be redelivered.
 A handler that throws is retried in place 3 times (200 ms, 800 ms, 3.2 s); if it
 still fails the record goes to `<topic>.dlt` with the exception, original topic,
 partition, offset and consumer group in its headers, and the partition moves on.
-Contract failures (`InvalidEventException`) skip the retries.
+Contract failures (`InvalidEventException`) skip the retries. A failure of the
+service's own infrastructure — no database connection, no transaction — is not
+the event's fault: it is retried from 1 s, doubling to 30 s, until the
+database is back, and never dead-lettered
+([ADR-030](decisions.md#adr-030-infrastructure-failures-are-retried-not-dead-lettered)).
+An HTTP request that hits the same failure gets `503` with `Retry-After: 5`.
 
 | Bad input | What contains it |
 |---|---|
@@ -458,6 +468,7 @@ Contract failures (`InvalidEventException`) skip the retries.
 | A flood of valid-looking events | Bounded `max.poll.records`, per-record cost is one indexed lookup; lag alerts fire; real traffic on other partitions/topics is unaffected by back-pressure in one group |
 | A slow, crashing or flapping consumer | It has its own consumer group; other groups' progress is independent |
 | A poison event that makes a handler throw every time | Retries → dead letter |
+| The service's database away | Retried until it is back; the partition waits, nothing is dead-lettered |
 
 Handlers that must call an external system (billing) do so **before** the
 transaction — the call carries the order id as its idempotency key, so a
@@ -470,7 +481,7 @@ records the outcome. No database transaction is held open across a network call.
 
 | Dependency | Protection |
 |---|---|
-| Payment provider | 1 s connect / 3 s read timeouts; one retry on connect error or 5xx; circuit breaker (Resilience4j: opens at 50% failures over 20 calls, half-opens after 10 s); an unavailable provider becomes `payment.failed (PAYMENT_UNAVAILABLE)` so the order is cancelled promptly and stock released |
+| Payment provider | 1 s connect / 3 s read timeouts; one retry on connect error or 5xx; circuit breaker (Resilience4j: opens at 50% failures over 20 calls, half-opens after 10 s); an unavailable provider becomes `payment.failed (PAYMENT_UNAVAILABLE)` so the order is cancelled promptly and stock released. Refunds are called only from the refund worker, which retries until the provider takes them; `commerce_refunds_pending` and `commerce_refunds_oldest_pending_age_seconds` show the queue, and `RefundsStuck` fires when one has waited 15 min |
 | Carrier | Same timeouts and breaker; called only from the shipping worker, which simply tries again on its next pass |
 | SMTP | 5 s timeouts; called only from the notification worker (handlers just record the email to send), which retries with backoff for up to 24 h, then marks it `FAILED` and counts it; an email is never in the path of an order |
 
@@ -782,10 +793,11 @@ recorded, through the back-office APIs:
 | Every order the shoppers placed exists exactly once | Lost or duplicated requests |
 | No order is still `PENDING` or `AWAITING_PAYMENT` past the timeout | Stuck sagas |
 | Each confirmed order has exactly one authorised payment of the order's total | Double or missing charges |
-| Each cancelled-after-payment or returned order has exactly one refund of the same amount | Missing or double refunds |
+| Each cancelled-after-payment or returned order has exactly one refund of the same amount, made (not still queued) | Missing, double or stuck refunds |
 | Each order that was never confirmed has no un-refunded payment | Charged for nothing |
-| For each product: stock at start − committed + restocked = stock on hand; reserved = sum of open reservations; never negative | Oversold or leaked stock |
+| At rest, no stock is reserved and none is negative; each order's reservations match its lines and its state (committed while it stands, released once cancelled or returned) | Oversold or leaked stock |
 | Each shipped order has exactly one outbound shipment; each returned order one return shipment | Duplicate or missing shipments |
+| A cancelled order's shipment is cancelled — unless the order was confirmed and its parcel had already left when shipping saw the cancellation: that is reported as a support case (section 6), not an error | Goods sent for nothing |
 | Each customer-facing event produced exactly one email | Duplicate or missing emails |
 | Outboxes are empty; no consumer lag remains; dead letters contain only what the experiment put there | Unfinished or dropped work |
 
@@ -812,6 +824,44 @@ Experiments provided:
 A run's result — hypothesis, timeline, measurements, verdict — is stored and
 exportable, and `scripts/prove.sh` runs the whole catalogue from the command
 line (CI runs a short subset on every change).
+
+As built (milestone 9b):
+
+- The runner is in the controller (`controller.experiments`), one experiment at a
+  time. Steady state means every service up, under 2 % of requests failing and
+  the shoppers ordering. The shoppers run at a standard load (20 shoppers, 60
+  orders a minute, with cancellations, returns, declined cards and sold-out
+  items), and are paused only while the system settles before the verdict.
+- Customer impact is counted from the shoppers' journal *after* one retry: a
+  shopper's checkout that gets no answer, 502, 503 or 504 is retried once with
+  the same `Idempotency-Key`, as the storefront's checkout does, so a retry
+  can never place a second order.
+- Settled means no order `PENDING`, `AWAITING_PAYMENT`, `RETURN_REQUESTED` or
+  `RETURNED`; every outbox empty; no refund queued; no consumer lag; no email waiting more than a
+  minute. The audit then reads the back-office APIs as the seeded administrator,
+  through the storefront edge, paced well inside its rate limit.
+- Duplicates are found from the other side: every order recorded for an audited
+  shopper during the window must be one a checkout of theirs was answered with.
+- The audit reads one service after another while shoppers may still return a
+  delivered order, so an order whose status moved while it was being read is
+  read again (up to three times); only a problem of one consistent state counts.
+- Counters in the verdict (dead letters, duplicates, payment outcomes) cover the
+  run's own window, so an earlier experiment's poison is not counted against the
+  next. Every call an experiment makes has a 2 s connect and 30 s read timeout,
+  and the settle step notes what it is still waiting for every 30 s.
+- The stock invariant is per order and at rest, not "stock at start − committed
+  + restocked = on hand": the seeder tops stock up every 30 s and orders from
+  before the window commit and restock during it, so that arithmetic over a
+  window is not reliable. Leaked reservations, oversold stock and an order's
+  stock in the wrong state are still caught.
+- Anything an experiment breaks is written first to a recovery ledger on the
+  controller's volume; if the controller dies mid-run, its next start puts
+  everything back. Runs are stored on the same volume (the last 200).
+- The ops service exposes `GET /api/v1/ops/experiments`, `…/runs`,
+  `…/runs/{id}`, `…/runs/{id}/report` (Markdown) and
+  `POST …/experiments/{name}/run` and `…/experiments/run` (DEV only; starting
+  one is recorded as an incident note). The console's Resilience proofs page
+  runs them and shows each run's evidence and timeline.
 
 ## 12. Deployment
 
@@ -965,7 +1015,12 @@ Stated so nobody assumes otherwise:
   take a real payment.
 - **Catalog search is a SQL `LIKE`**, adequate for hundreds of products.
 - **Deploys are not rolling.** `docker compose up` replaces a service's replicas
-  together; zero-downtime releases need an orchestrator's rolling update.
+  together; zero-downtime releases need an orchestrator's rolling update. The
+  "deploy under load" experiment shows what one must do: replace one instance at
+  a time, and after each is healthy wait for the edges to take it back (they
+  retry a failed upstream after 2 s: `max_fails=2 fail_timeout=2s`) before
+  taking the next away. Without that wait, both identity instances were briefly
+  out of the edge's rotation and two checkouts in 229 got `503`.
 - **Account deletion and data export stop at identity.** Bastion's GDPR export
   and delete cover the account; orders, shipments and emails held by other
   services are not yet exported or anonymised (see the design review).

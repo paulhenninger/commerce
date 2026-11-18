@@ -215,6 +215,26 @@ class MessagingIntegrationTest {
     }
 
     @Test
+    void anEventThatFailsBecauseTheDatabaseIsAwayIsRetriedUntilItAppliesNotDeadLettered() throws Exception {
+        String key = "transient-" + UUID.randomUUID();
+        EventEnvelope event = codec.create(MessagingTestApp.TYPE, key, "msgtest", new Happened(key, 1, "transient"));
+        kafka.send(MessagingTestApp.TOPIC, key, codec.serialize(event)).get();
+        // Five failures (more than the three retries a handler bug gets), then success.
+        await().atMost(Duration.ofSeconds(90)).untilAsserted(() -> assertThat(appliedFor(key)).hasSize(1));
+        assertThat(listener.transientAttempts.get()).isGreaterThan(KafkaErrorHandling.RETRIES + 1);
+        assertThat(deadLettersFor(key)).isEmpty();
+    }
+
+    @Test
+    void transientInfrastructureIsToldApartFromBadEventsAndBugs() {
+        assertThat(KafkaErrorHandling.transientInfrastructure(new org.springframework.kafka.listener.ListenerExecutionFailedException(
+                "x", new org.springframework.transaction.CannotCreateTransactionException("no connection")))).isTrue();
+        assertThat(KafkaErrorHandling.transientInfrastructure(new IllegalStateException("bug"))).isFalse();
+        assertThat(KafkaErrorHandling.transientInfrastructure(new com.thirdstone.commerce.platform.events.InvalidEventException(
+                "bad"))).isFalse();
+    }
+
+    @Test
     void unknownEventTypeIsSkipped() throws Exception {
         String key = "unknown-" + UUID.randomUUID();
         kafka.send(MessagingTestApp.TOPIC, key, codec.serialize(

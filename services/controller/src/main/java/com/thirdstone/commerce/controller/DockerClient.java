@@ -18,7 +18,7 @@ import java.util.Map;
  * the six lifecycle actions). Only this deployment's containers are ever listed.
  */
 @Component
-class DockerClient {
+public class DockerClient {
 
     private final RestClient rest;
     private final ControllerProperties props;
@@ -30,7 +30,7 @@ class DockerClient {
         this.json = json;
     }
 
-    List<Instance> list() {
+    public List<Instance> list() {
         String filters = json.writeValueAsString(Map.of("label",
                 List.of("com.docker.compose.project=" + props.project())));
         JsonNode containers;
@@ -70,7 +70,7 @@ class DockerClient {
         return out;
     }
 
-    void act(String containerId, String action) {
+    public void act(String containerId, String action) {
         try {
             rest.post().uri(u -> u.path("/containers/{id}/{action}").queryParamIfPresent("t",
                             action.equals("stop") || action.equals("restart") ? java.util.Optional.of(10)

@@ -170,14 +170,25 @@ services:
     depends_on:
       docker-proxy:
         condition: service_healthy
-    networks: [docker, control, telemetry]
+    # docker: the proxy. control: ops, the testkit. telemetry: Prometheus.
+    # sim: the storefront edge, for the ledger audit's back-office reads.
+    networks: [docker, control, telemetry, sim]
     environment:
       COMMERCE_ENV: dev
       COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME}
       OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
+      PROMETHEUS_URL: http://prometheus:9090
+      TESTKIT_URL: http://testkit:8080
+      STOREFRONT_URL: http://storefront-web:8080
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?Set BOOTSTRAP_ADMIN_EMAIL}
+      DEV_ADMIN_PASSWORD: ${DEV_ADMIN_PASSWORD:?Set DEV_ADMIN_PASSWORD}
+      ORDER_SAGA_TIMEOUT: ${ORDER_SAGA_TIMEOUT:-2m}
+    volumes:
+      # Experiment runs and the recovery ledger survive a restart of the controller.
+      - controller-state:/var/lib/commerce
     tmpfs:
       - /tmp:size=32m
-    mem_limit: 256m
+    mem_limit: 320m
     pids_limit: 256
 
   storefront-web:
@@ -249,3 +260,7 @@ networks:
     ipam:
       config:
         - subnet: ${COMMERCE_NET:-10.77}.21.0/24
+
+volumes:
+  # The controller's experiment runs and recovery ledger.
+  controller-state:
