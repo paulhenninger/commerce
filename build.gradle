@@ -43,6 +43,17 @@ configure(subprojects.findAll { it.path.count(':') == 2 }) {
         dependencies {
             dependency 'at.yawk.lz4:lz4-java:1.11.4'
             dependency 'org.xerial.snappy:snappy-java:1.1.10.9'
+            // OpenTelemetry before 1.67.0 parses a crafted `tracestate` header in
+            // quadratic time (CVE-2026-118259, GHSA-ccrj-gw8r-854m), and the edges pass
+            // that header through. Found by Dependabot. Every artifact of the release
+            // moves together. Drop once the BOM's opentelemetry.version is past it.
+            dependencySet(group: 'io.opentelemetry', version: '1.67.0') {
+                ['api', 'common', 'context', 'exporter-common', 'exporter-otlp',
+                 'exporter-otlp-common', 'exporter-sender-okhttp',
+                 'extension-trace-propagators', 'sdk', 'sdk-common',
+                 'sdk-extension-autoconfigure-spi', 'sdk-logs', 'sdk-metrics',
+                 'sdk-trace'].each { entry "opentelemetry-$it" }
+            }
         }
     }
 

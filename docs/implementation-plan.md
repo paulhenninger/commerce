@@ -418,7 +418,13 @@ number that differs per host), not root: `stack.sh` passes its id to
 `docker-proxy` as `DOCKER_SOCKET_GID` (0 where the host has no socket file,
 i.e. Docker Desktop on Windows). Trivy's first run failed every Kafka-using image
 on Kafka's codecs (lz4-java 1.11.2, snappy-java 1.1.10.7): pinned past them in
-`build.gradle`'s `dependencyManagement`.
+`build.gradle`'s `dependencyManagement`. OpenTelemetry 1.62.0 (Boot 4.1.2's)
+has CVE-2026-118259 (Dependabot, 2026-11-18): pinned to 1.67.0 the same way.
+Neither `bomProperty 'opentelemetry.version'` nor importing
+`opentelemetry-bom:1.67.0` after Boot's BOM moves it, because Boot's BOM
+imports OpenTelemetry's itself and the plugin's rule still picks 1.62.0. Only
+per-artifact `dependency`/`dependencySet` entries do. Check with
+`./gradlew :<module>:dependencies` after changing one.
 
 **Spring bean names**: Boot already defines `requestContextFilter`; platform
 beans use a `commerce` prefix where a clash is possible.
