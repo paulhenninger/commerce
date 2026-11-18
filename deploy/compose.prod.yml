@@ -26,3 +26,5 @@ services:
       TRACE_SAMPLING: ${TRACE_SAMPLING:-0.1}
       ADMIN_REQUIRES_MFA: "true"
       OPS_REQUIRE_MFA: "true"
+    # MAX_CONCURRENT_HASHES=8 (prod.env) fits the 768 MiB and 464 MiB heap every
+    # environment now gives identity (compose.yml, ADR-035, ADR-037).

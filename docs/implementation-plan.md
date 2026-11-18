@@ -15,8 +15,81 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-18: **milestones 0–10a are complete**; milestone 11 (load
-baseline) is next.
+As of 2026-11-18: **milestones 0–11 are complete**.
+
+Milestone 11 acceptance: the baseline of record (2026-11-18 20:21 UTC, Docker
+Desktop with 22 CPUs and 13.7 GiB, memory budgets per ADR-037,
+`MAX_CONCURRENT_HASHES=2`) is in architecture §8. Catalog p95 and place →
+confirmed p95 met their targets at every step up to 20 orders/s, the top of the
+run. `POST /orders` p95 met its target up to 15/s (130 ms) and missed it at
+20/s (289 ms). The cause was the shared MySQL's commit path. No checkout
+failed and no service answered 5xx at any step. No container restarted during
+a step: identity held with the hashing bound of 2, so DEV keeps 2. Tempo was
+killed once at its 512 MiB limit about 50 s after the run ended, while it
+worked through the 20/s step's traces (`dmesg`), and restarted. The idle
+fsync took 3.1 ms, against 12–39 ms in the earlier runs, after Docker
+Desktop's VM was enlarged and restarted. The report's "Service 5xx %" column
+read "—" because no 5xx series existed; Prometheus confirmed none in about
+75,000 requests, and `load-baseline.py` now prints 0 in that case. The runs
+below led up to it.
+
+Milestone 11, first local run (2026-11-18 15:00 UTC, Docker Desktop, 22 CPUs,
+11.7 GiB; not yet the baseline of record). Catalog p95 ≤ 9 ms at every rate up to 20
+orders/s. Place → confirmed p95 is 1.9 s at 10/s, 7 s at 15/s and ≥ 30 s at
+20/s. `POST /orders` p95 is 74 ms at 1/s and 0.5–0.6 s from 3/s, with p50
+steady at about 40 ms. The 6/s step is void: the host slept and Prometheus
+has no samples for nine minutes, so `load-baseline.py` now detects a pause and
+runs the step again. The bottleneck is the shared MySQL's commit path, not
+CPU: no service used more than 0.6 cores. The evidence:
+
+- In the order schema, `COMMIT` is p95 182 ms and p99 1 s (performance_schema).
+  Configuration is fully durable (`innodb_flush_log_at_trx_commit=1`,
+  `sync_binlog=1`), and one synchronous 4 KiB write on the Docker Desktop
+  volume takes 12–15 ms.
+- Row-lock waits rise from about 1/s to 15/s with the rate. Every wait sampled
+  is on a hot `inventory.stock` row (about 20 SKUs) or on
+  `shipping.shipments`, held by a transaction that is in `COMMIT`. None is
+  on order's tables.
+- Order's pool (10 per replica) runs out from 15/s: acquire waits reach the
+  2 s timeout, and lag builds in order and then in notification.
+
+Bastion PR #27 (session check in one round trip) was measured against the old
+identity at 3/s and 10/s on the same stack. MySQL sees four fewer `SET`s and
+one fewer read-only `COMMIT` per auth check, which is about 8% of its commits
+at 10/s, but none of those commits fsync. The latency targets did not move
+outside run-to-run noise.
+
+The run found a separate problem. When a step's shoppers all sign in again at
+once (their access tokens expire together), identity can hit its 640 MiB
+`mem_limit` and is killed without a log line: identity-2 at 16:23 UTC, and
+identity-1 at 630 MiB afterwards. The JVM gets 60% of the container for heap
+(371 MiB), about 163 MiB non-heap, thread stacks and a 64 MiB `/tmp` tmpfs, and
+concurrent Argon2id hashes take about 19 MiB of heap each. The hashing bound
+is now set per environment (ADR-035: DEV 2, INT/QA 4, PROD 8 with 768 MiB).
+DEV identity's 640 MiB is still tight, and the next baseline run shows whether
+2 is enough.
+
+Email is a second limit. Notification sends about 15 emails/s to Mailpit. The
+runs above produce more than that from 10 orders/s up (several emails per
+order), and at 17:13 UTC 15,317 were still pending, the oldest 72 minutes old.
+`smoke.sh`'s email checks wait 30 s, so they fail until that backlog drains.
+The backlog delays emails only; it holds up no order. The next baseline run
+should report notification's pending count and oldest age per step.
+
+Second run (2026-11-18 17:37 UTC, `MAX_CONCURRENT_HASHES=2`): void, and not the
+baseline of record. The kernel of Docker Desktop's VM killed identity six times
+between 17:40 and 17:51 (both replicas at 17:51, the 15/s step, 26.9% of
+checkouts failed), order and shipping four times (17:55–17:58), Alloy once,
+MySQL once at 18:12 while the backlog drained, and Tempo over a hundred times.
+Docker recorded none of these kills (`OOMKilled` false; `dmesg` in the
+`docker-desktop` distribution has them). The cause was the 60/40 heap split,
+not hashing: non-heap plus native memory needs about 230 MiB, more than 40% of
+any limit up to 640 MiB. Idle fsync was also slower (39 ms against 12–15 ms).
+ADR-037 gives each JVM service a measured heap and raises the limits that did
+not fit. `load-baseline.py` now marks a step during which a container
+restarted, and refuses to start when the containers' limits (now about
+12.5 GiB) exceed the Docker VM's memory. This machine's VM has 11.7 GiB
+(`.wslconfig` `memory=12GB`), so the next run needs about 14 GB first.
 
 Milestone 10a acceptance (2026-11-18): `verify-switches.py` on a fresh DEV
 stack — one account, empty catalog, every switch off, no event written for
@@ -40,7 +113,7 @@ environment is listed in `CD_ENVIRONMENTS` yet.
 |---|---|
 | `docs/`, `README.md`, `AGENTS.md` | Design written (this set of documents) |
 | Root Gradle build (`settings.gradle`, `build.gradle`, wrapper 9.8.2) | Working: `platform:core`, `platform:messaging` and `services:identity` compile |
-| `services/identity` | Bastion 2.1.0 renamed (package `com.thirdstone.commerce.identity`, application name `identity`). Added (5.3): `gateway.GatewayAuthController` (`GET /internal/authz[?require=admin]`, refusal reason in `X-Auth-Error`), `ops-requires-mfa` setting, tracing and environment tag in `application.yml`. `./gradlew :services:identity:build`: 93 tests, none skipped. Test-only edits: `MySqlMigrationTest` reads `deploy/mysql/roles.sql` and expects the `<database>_app` login; `application-test.yml` turns trace export off |
+| `services/identity` | Bastion 2.1.0 renamed (package `com.thirdstone.commerce.identity`, application name `identity`). Added (5.3): `gateway.GatewayAuthController` (`GET /internal/authz[?require=admin]`, refusal reason in `X-Auth-Error`), `ops-requires-mfa` setting, tracing and environment tag in `application.yml`. Cherry-picked from Bastion: PR #27, the per-request session check in one round trip (2026-11-18). `./gradlew :services:identity:build`: 95 tests, none skipped. Test-only edits: `MySqlMigrationTest` reads `deploy/mysql/roles.sql` and expects the `<database>_app` login; `application-test.yml` turns trace export off |
 | `web/storefront` | Bastion's account pages plus the shop (5.12): catalog with search and categories (typographic product tiles coloured by category; no product images yet), product, cart (localStorage, guarded), checkout (Idempotency-Key per attempt, handles 409 PRICE_CHANGED, test payment tokens only, see architecture §15), orders, order detail (live progress, cancel, return). Back office: products, stock, order lookup, plus Bastion's users. Errors show the request id; sign-in returns to the page that needed it. nginx edge per 5.12; edge-made errors carry `X-Request-Id` |
 | `platform/core` | Complete (5.1), 25 tests. Also `web.PageRequest`/`PageResponse`, `data.Ids` (ULID-style ids), `data.Sql` (UTC `DATETIME` ↔ `Instant`) |
 | `platform/messaging` | Complete (5.2), 14 integration tests. Infrastructure failures (no database connection or transaction) are retried until they clear, never dead-lettered, and requests get `503` + `Retry-After` (ADR-030). **Test fixtures** (`testFixtures`, used by every event-driven service): `CommerceContainers` (MySQL + Kafka with all topics, shared per JVM), `Edge` (requests as the edge forwards them), `EventBus` (publish events, await what a service announces) |
@@ -62,7 +135,7 @@ environment is listed in `CD_ENVIRONMENTS` yet.
 | `services/Dockerfile` | One multi-stage file for every JVM service (`--build-arg SERVICE=…`); compiles once, readiness healthcheck |
 | `docs/identity/` | Bastion's docs, renamed; paths in them still assume Bastion's layout |
 | Root files | `LICENSE`, `SECURITY.md`, `.gitattributes`, `.gitleaks.toml`, `.trivyignore` from Bastion; `.gitignore`, `.dockerignore`. Git repository initialised on `main` |
-| Everything else in section 2 | Done, except milestone 11 (load baseline) |
+| Everything else in section 2 | Done |
 
 Images already pulled on the development machine: `apache/kafka:4.4.0`,
 `prom/prometheus:v3.16.0`, `prom/alertmanager:v0.35.0`, `grafana/grafana:13.3.1`,
@@ -355,15 +428,21 @@ Node 22 locally (images build on Node 26). Shell scripts must be LF
 (`.gitattributes`). On Docker Desktop the "cannot reach the internet" checks of
 Bastion's `verify-stack.sh` fail by design; they pass on Linux CI.
 
-**Memory budget (limits).** DEV's default is the HA topology: 2 × 7 replicated
-JVM services at 320 MiB (identity 640), ops 320, testkit 384, controller 256,
-simulators 256, 3 Kafka brokers at 512, MySQL 640, Prometheus/Loki/Tempo/
-Grafana/Alloy 256 each, nginx and small helpers ~250 — about 10.5 GiB of
-*limits*. **Measured (milestone 9)**: the HA topology, all 33 containers, uses
+**Memory budget (limits, ADR-037).** DEV's default is the HA topology, two of
+each service: identity 768 MiB, order and shipping 448, billing, catalog,
+inventory, notification and ops 384; testkit 384, controller 320, simulators
+320; 3 Kafka brokers at 512, MySQL 768, Tempo 512, Prometheus 384, Loki 320,
+Grafana and Alloy 256, nginx and small helpers ~560. That is about 12.5 GiB of
+*limits*, which a load run needs the Docker VM to exceed (`load-baseline.py`
+checks). **Measured (milestone 9)**: the HA topology, all 33 containers, uses
 about 6.4 GiB after a smoke run and starts in under 3 minutes on this machine's
 8 GB Docker Desktop. 10 GB gives headroom for simulated shoppers plus the chaos
 lab; `--lite` (single instances, one broker) needs less (not measured). JVM flags:
-`-XX:MaxRAMPercentage=60 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError`.
+`-Xmx${JVM_HEAP} -XX:ReservedCodeCacheSize=64m -XX:+UseSerialGC
+-XX:+ExitOnOutOfMemoryError`. Each service's `JVM_HEAP` sits beside its
+`mem_limit` in compose: the limit minus its measured non-heap peak minus ~80 MiB
+native (ADR-037). Change the two together; the image refuses to start without a
+heap.
 
 ## 5. Module specifications
 
@@ -694,7 +773,7 @@ pass. Commit at each milestone.
 | 9b | **Resilience proofs.** `ExperimentRunner`, `LedgerAudit`, back-office read endpoints, console page, `scripts/prove.sh` | `scripts/prove.sh` runs the whole catalogue and every experiment passes with a clean audit; deliberately breaking a guarantee (e.g. disabling the processed-events check in a scratch build) makes the corresponding experiment fail — proving the proofs can fail |
 | 10 | **CI/CD and docs.** Workflows (CI runs `prove.sh --quick`: replica crash, broker crash, poison data, intruder); `docs/api.md`, `docs/configuration.md`; refresh `operations.md` with what was actually observed; update `docs/identity/` paths | CI green on a clean clone; README quickstart works verbatim |
 | 10a | **DEV simulations off by default** (ADR-033, architecture §11 *The simulation switches*). Testkit: only the administrator at startup; a `test-data` switch (shopper account, products, stock top-up); switches for shoppers, actors and simulator faults persisted on a `testkit-state` volume and re-applied at startup; `GET/PUT /switches`. Console: Test data switch on the Simulated shoppers page; every page shows what is on. Controller: an experiment records the switches, turns on test data and shoppers, restores them after. `verify-storefront.py` and `verify-testkit.py` turn test data on (`smoke.sh` needs none) | A fresh `stack.sh dev up` has one account (the administrator), no products, no shoppers, no actors, no faults, and generates no events for 10 min; switching each on from the console starts it, off stops it and keeps its data; a testkit restart keeps the switches; `down -v` resets them; `smoke.sh`, `verify-storefront.py`, `verify-testkit.py` and `prove.sh --quick` pass from a fresh stack with nothing switched on by hand |
-| 11 | **Load baseline.** Drive the simulator at increasing rates | The latency targets in architecture §8 are confirmed or replaced by measured numbers, with the bottleneck named |
+| 11 | **Load baseline.** Drive the simulator at increasing rates (`scripts/load-baseline.py`, locally on the DEV HA stack with the host recorded; `load.yml` on a GitHub runner is optional, ADR-034) | Architecture §8 records, beside the unchanged targets, the highest rate at which this machine met each one, with the host and the bottleneck named (ADR-036) |
 
 ## 7. Definition of done
 

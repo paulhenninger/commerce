@@ -145,6 +145,14 @@ management:
     tags:
       application: ${spring.application.name}
       environment: ${COMMERCE_ENV:dev}
+    # Histogram buckets as every other service has (platform-defaults.yml), so
+    # the auth check every authenticated call makes (/internal/authz) has a real
+    # p95 across replicas: design review C budgets it at 15 ms.
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 5ms,10ms,15ms,25ms,50ms,100ms,250ms,500ms,1s,2s
   otlp:
     metrics:
       export:

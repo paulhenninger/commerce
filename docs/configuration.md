@@ -51,6 +51,8 @@ Every published port is bound to `127.0.0.1`; put a TLS terminator in front.
 | `JWT_SECRET`, `DATA_ENCRYPTION_KEY` | Identity's signing and encryption keys (`openssl rand -base64 32`) |
 | `EDGE_SHARED_SECRET` | Shared by the edges and the services: a service believes identity headers only with it (32+ of `A-Z a-z 0-9 _ . -`) |
 | `ADMIN_REQUIRES_MFA`, `OPS_REQUIRE_MFA` | Back office and ops need a two-factor session; also gates dead-letter replay. Default `true`; DEV turns both off for the seeded administrator; PROD forces them on |
+| `JVM_HEAP` | A JVM service's heap (`-Xmx`), set in compose beside its `mem_limit`, not in the env files: the limit minus the non-heap and native memory measured under load. Required; the image will not start without it ([ADR-037](decisions.md#adr-037-every-jvm-service-has-a-measured-memory-budget)) |
+| `MAX_CONCURRENT_HASHES` | Password hashes (Argon2id: ~19 MiB of heap, ~50 ms of a core each) each identity replica runs at once; more wait up to 10 s, then `503 BUSY`. DEV `2`, INT and QA `4`, PROD `8` with identity's `mem_limit` at 768 MiB. For production: about one per core, at most half of `DB_POOL_SIZE`, and it must fit the container ([ADR-035](decisions.md#adr-035-the-password-hashing-bound-is-set-per-environment)) |
 | `SIGNUP_CHECK_MX` | Refuse sign-ups whose email domain has no mail server (`false` in DEV: Mailpit has none) |
 | `CORS_ORIGINS` | Default `APP_BASE_URL` plus `PASSKEY_EXTRA_ORIGINS` |
 | `EDGE_API_RATE`, `EDGE_API_BURST` | Storefront edge rate limit per client address: requests per second (default 50) and burst (100) |

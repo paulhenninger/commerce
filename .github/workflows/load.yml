@@ -1,0 +1,47 @@
+name: Load baseline
+
+# Optional (ADR-034): the baseline of record is measured locally. This runs the
+# load baseline (milestone 11) on a Linux runner for comparison: the DEV stack, then
+# scripts/load-baseline.py stepping the simulated shoppers up to 20 orders/s,
+# with the report uploaded. Not on every change (it takes about 40 minutes):
+# by hand, or by labelling a pull request "load-baseline".
+on:
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: Orders per minute at each step
+        default: '60,180,360,600,900,1200'
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'load-baseline'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start the DEV stack (HA topology)
+        run: scripts/stack.sh dev up -d --build --wait --wait-timeout 600
+      - name: Hardware
+        run: |
+          nproc; free -m; df -h /
+      - name: Load baseline
+        env:
+          STEPS: ${{ inputs.steps || '60,180,360,600,900,1200' }}
+        run: python3 -u scripts/load-baseline.py --steps "$STEPS"
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-baseline
+          path: build/load/
+          if-no-files-found: ignore
+      - name: Tear down
+        if: always()
+        run: scripts/stack.sh dev down -v >/dev/null 2>&1 || true

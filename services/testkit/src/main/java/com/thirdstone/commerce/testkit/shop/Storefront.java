@@ -1,6 +1,8 @@
 package com.thirdstone.commerce.testkit.shop;
 
 import com.thirdstone.commerce.testkit.TestkitProperties;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -15,6 +17,10 @@ import java.util.Map;
  * headers, real tokens. Each caller presents its own client address
  * ({@code X-Forwarded-For}), which the DEV edge believes from the testkit alone,
  * so per-IP limits apply per simulated shopper.
+ *
+ * Every call is timed as the customer sees it — through the edge, its cache and
+ * its auth check — as {@code commerce_testkit_request_seconds{route, status}},
+ * the measurement the latency targets are about (architecture §8, milestone 11).
  */
 @Component
 public class Storefront {
@@ -32,13 +38,43 @@ public class Storefront {
 
     private final RestClient rest;
     private final JsonMapper json;
+    private final MeterRegistry registry;
 
-    Storefront(RestClient.Builder builder, TestkitProperties props, JsonMapper json) {
+    Storefront(RestClient.Builder builder, TestkitProperties props, JsonMapper json, MeterRegistry registry) {
         this.rest = builder.clone().baseUrl(props.storefrontUrl()).build();
         this.json = json;
+        this.registry = registry;
+    }
+
+    /** A fixed name for what a call is, never the path itself (ids would make unbounded labels). */
+    static String route(String method, String path) {
+        String p = path.contains("?") ? path.substring(0, path.indexOf('?')) : path;
+        if (p.equals("/api/v1/catalog/products")) return "catalog.list";
+        if (p.startsWith("/api/v1/catalog/")) return "catalog.other";
+        if (p.equals("/api/v1/orders")) return method.equals("POST") ? "order.place" : "order.list";
+        if (p.startsWith("/api/v1/orders/")) {
+            return p.endsWith("/cancel") ? "order.cancel" : p.endsWith("/return") ? "order.return" : "order.get";
+        }
+        if (p.startsWith("/api/v1/auth/")) return "auth";
+        if (p.startsWith("/api/v1/backoffice/")) return "backoffice";
+        return "other";
     }
 
     public Answer call(String method, String path, String ip, String token, Object body, Map<String, String> headers) {
+        long start = System.nanoTime();
+        String status = "error";
+        try {
+            Answer answer = send(method, path, ip, token, body, headers);
+            status = (answer.status() / 100) + "xx";
+            return answer;
+        } finally {
+            Timer.builder("commerce.testkit.request").tag("route", route(method, path)).tag("status", status)
+                    .publishPercentileHistogram().register(registry)
+                    .record(System.nanoTime() - start, java.util.concurrent.TimeUnit.NANOSECONDS);
+        }
+    }
+
+    private Answer send(String method, String path, String ip, String token, Object body, Map<String, String> headers) {
         var request = rest.method(org.springframework.http.HttpMethod.valueOf(method)).uri(path)
                 .header("X-Forwarded-For", ip)
                 .header("X-Commerce-Client", "web")

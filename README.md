@@ -127,8 +127,8 @@ CI fails if a DEV-only container appears in another environment's Compose model.
 
 ## Running it
 
-You need Docker (give Docker Desktop 8–10 GB of memory for the default HA
-topology), bash (Git Bash on Windows), curl and Python 3.
+You need Docker (give Docker Desktop at least 8 GB of memory for the default HA
+topology, and 14 GB for the load baseline), bash (Git Bash on Windows), curl and Python 3.
 
 ```bash
 git clone https://github.com/paulhenninger/commerce.git && cd commerce

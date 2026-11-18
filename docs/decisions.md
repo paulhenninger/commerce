@@ -40,6 +40,10 @@ Change a decision by adding a new record that supersedes it, not by editing hist
 | [031](#adr-031-refunds-are-queued-and-retried-until-made) | Refunds are queued and retried until made | Accepted |
 | [032](#adr-032-a-public-repository) | The repository is public | Accepted |
 | [033](#adr-033-dev-simulations-are-off-until-switched-on) | DEV simulations are off until switched on | Accepted (design; milestone 10a) |
+| [034](#adr-034-the-load-baseline-is-measured-locally-github-is-optional) | The load baseline is measured locally; GitHub is optional | Accepted |
+| [035](#adr-035-the-password-hashing-bound-is-set-per-environment) | The password-hashing bound is set per environment | Accepted (its heap sizing rule replaced by ADR-037) |
+| [036](#adr-036-the-latency-targets-stay-this-machines-capacity-is-recorded-beside-them) | The latency targets stay; this machine's capacity is recorded beside them | Accepted (capacity recorded in architecture §8) |
+| [037](#adr-037-every-jvm-service-has-a-measured-memory-budget) | Every JVM service has a measured memory budget | Accepted |
 
 ---
 
@@ -729,3 +733,196 @@ Deleting a simulation's data when it is switched off — the services have no
 delete APIs for orders or accounts, and data that disappears is not how real
 data behaves.
 
+
+## ADR-034: The load baseline is measured locally; GitHub is optional
+
+**Context.** Milestone 11 measures the latency targets in architecture §8 and
+names the bottleneck by stepping the simulated shoppers up to 20 orders/s
+(`scripts/load-baseline.py`). It can run on the development machine (Docker
+Desktop) or on a GitHub-hosted runner (`load.yml`, 4 CPUs, 16 GB, Linux). The
+HA stack uses about 6.8 GiB at rest, so an 8 GB Docker Desktop is too small
+under load; the development machine now gives Docker Desktop about 11.7 GiB and
+22 CPUs.
+
+**Decision** (owner, 2026-11-18). The baseline of record is measured locally on
+the DEV HA stack, with the host it ran on (Docker Desktop memory and CPUs, OS)
+written into the report beside the numbers. `load.yml` stays as an optional
+extra, run by hand (`workflow_dispatch`) or by labelling a pull request
+`load-baseline`, for a Linux measurement to compare against later. Neither
+runs on every change.
+
+**Consequences.** The numbers describe one Windows/Docker Desktop host, not a
+production host; the report says so, and a bottleneck that is Docker Desktop's
+(its VM, its networking) is named as such. Docker Desktop needs more than 10 GB
+for the run. A GitHub run, when made, is reported beside the local one, not in
+place of it.
+
+**Rejected.** GitHub only — the owner wants the run under their own control.
+Deleting `load.yml` — the owner wants a Linux run possible later.
+
+## ADR-035: The password-hashing bound is set per environment
+
+**Context.** ADR-029 bounds how many Argon2id hashes identity runs at once
+(`MAX_CONCURRENT_HASHES`, Bastion's `security.max-concurrent-hashes`, default
+4), but compose never passed the setting, so every environment got 4. The
+right value depends on the host. During milestone 11 a DEV replica hit its
+640 MiB container limit and was killed. The cause was a burst of sign-ins,
+because every simulated shopper's access token expired at the same moment. A
+production replica with dedicated cores and memory can afford more.
+
+**What the value is.** The value applies to each identity replica: it is how
+many password hashes or checks (sign-up, sign-in, password change and reset)
+that replica runs at the same moment. Each takes about 19 MiB of heap and about
+50 ms of one core. A request beyond the bound waits for a free slot, up to
+10 s, and then gets `503 BUSY` ("try again"). The value sets three things:
+
+- memory for hashing: about value × 19 MiB of heap;
+- password checks per second per replica: about value ÷ 0.05 s, as long as
+  the replica has that many cores;
+- database connections held while waiting: Bastion checks the password inside
+  its transaction, so a queued request holds one of the 20 in the pool
+  (`DB_POOL_SIZE`).
+
+**Decision** (owner, 2026-11-18). Compose passes `MAX_CONCURRENT_HASHES`
+through, and each environment's settings file sets its own value:
+
+| Environment | Value | Why |
+|---|---|---|
+| DEV | 2 | Every service shares one laptop's Docker VM, and identity has 640 MiB. Two replicas still check about 80 passwords/s, so 200 simulated shoppers signing in at once clear in about 2.5 s, well inside the 10 s wait |
+| INT, QA | 4 | Bastion's default, in the same 640 MiB as DEV |
+| PROD | 8 | Recommended starting point, with identity's `mem_limit` raised to 768 MiB in `compose.prod.yml` |
+
+**Recommended for production.** Size the value to the identity replica, not
+to expected traffic:
+
+1. Use about one per core the replica can count on. A hash is CPU-bound, so a
+   value above that only makes each hash slower, not more of them.
+2. Keep it at or below half of `DB_POOL_SIZE`, so that sign-ins waiting for a
+   slot never starve the rest of identity of connections.
+3. Make sure it fits the container. The heap is 60% of `mem_limit`
+   (`-XX:MaxRAMPercentage=60`), and it needs about 200 MiB for the application
+   plus value × 19 MiB. The other 40% has to hold about 165 MiB of non-heap
+   memory, thread stacks and the 64 MiB `/tmp`. For 8 that is 768 MiB. For 16
+   (eight dedicated cores) raise `DB_POOL_SIZE` to at least 32 and `mem_limit`
+   to about 1 GiB.
+4. Add capacity with replicas (each has its own bound), not by raising the
+   value past the cores.
+5. Watch for `503 BUSY` on sign-in and for identity's heap. Persistent `BUSY`
+   under real traffic means more replicas, not a higher value on the same
+   container.
+
+**Consequences.** DEV queues sign-in bursts sooner and uses less heap for
+them. That lowers the pressure, but DEV identity's headroom in 640 MiB is
+still thin (implementation plan §1). PROD checks twice as many passwords per
+replica and has the memory for them. A value of 0 or below fails at startup,
+as it already did. Argon2's parameters, and so the cost of each guess for an
+attacker, are unchanged in every environment, so this weakens no control.
+
+**Rejected.** One value for every environment. Too high for a laptop, or too
+low for a production host. An unbounded or very high value in PROD. That
+reopens ADR-029's denial of service. Cheaper Argon2 parameters in DEV. They
+would make DEV's passwords unlike production's, and the hashes would differ.
+
+## ADR-036: The latency targets stay; this machine's capacity is recorded beside them
+
+**Context.** Milestone 11 measures the targets in architecture §8 on the
+development machine (ADR-034). The first runs show the shared MySQL's commit
+path as the bottleneck, not CPU. The configuration is fully durable
+(`innodb_flush_log_at_trx_commit=1`, `sync_binlog=1`), and one synchronous
+4 KiB write on Docker Desktop's volume takes 12–15 ms, against well under 1 ms
+on a Linux NVMe disk. On this machine `POST /orders` p95 is over 250 ms from
+3 orders/s, and place → confirmed p95 is over 3 s from about 15/s.
+
+**Decision** (owner, 2026-11-18). The three targets stay as they are and keep
+setting the production alert thresholds: catalog reads p95 < 100 ms at the
+edge, `POST /orders` p95 < 250 ms, place → confirmed p95 < 3 s. Architecture §8
+records, beside them, this machine's measured capacity: for each target, the
+highest rate at which the baseline of record met it, the host it ran on, and
+the bottleneck that ended it. The bottleneck is said to be Docker Desktop's
+when it is.
+
+**Consequences.** On this machine the targets are not met at every rate, and
+§8 says so rather than moving the thresholds to fit. The capacity figures
+describe one Windows/Docker Desktop host. A Linux run (`load.yml`), when made,
+is recorded beside them, not in place of them. Production alerts keep their
+meaning.
+
+**Rejected.** Replacing the targets with the measured numbers. That would
+build Docker Desktop's fsync time into production's alert thresholds.
+
+
+## ADR-037: Every JVM service has a measured memory budget
+
+**Context.** Every JVM service gave its heap 60% of the container's
+`mem_limit` (`-XX:MaxRAMPercentage=60`) and left the other 40% for everything
+else. The milestone 11 run at 17:37 UTC on 2026-11-18 showed that the 40% is
+not enough under load. The kernel of Docker Desktop's VM killed identity six
+times (both replicas at once at 17:51, during the 15/s step, where 26.9% of
+checkouts failed), order and shipping four times, Alloy once and MySQL once,
+and Tempo over a hundred times. Docker did not report the kills, and the
+services logged nothing first. ADR-035's lower hashing bound did not stop
+identity's. Peaks measured during that run (Prometheus):
+
+| Service | Limit | Heap committed | Non-heap committed | Native (RSS − JVM) |
+|---|---|---|---|---|
+| identity | 640 MiB | 371 MiB | 186 MiB (metaspace 139) | ~100 MiB |
+| order | 320 MiB | 185 MiB | 149 MiB | ~78 MiB |
+| shipping | 320 MiB | 146 MiB | 153 MiB | — |
+| billing, catalog, inventory, notification, ops | 320 MiB | 75–96 MiB | 135–152 MiB | — |
+| simulators | 256 MiB | 149 MiB | 91 MiB | — |
+
+Non-heap memory is mostly class metadata (90–140 MiB, fixed once the
+application has started) and compiled code, which grows under load (40–55 MiB).
+Together with native memory (thread stacks, GC and JIT structures) it needs
+about 230 MiB in a 320 MiB container, so a 60% heap cannot fit. Every service
+stood at its limit even after the load stopped. The heap does not shrink, so
+the next burst kills it. Separately, all the limits together (10.9 GiB) came
+within 0.8 GiB of the Docker VM's 11.7 GiB.
+
+**Decision** (owner, 2026-11-18).
+
+1. Each JVM service's heap is set explicitly (`JVM_HEAP`, compose), as its
+   `mem_limit` minus its measured non-heap peak, minus about 80 MiB of native
+   memory (100 MiB for identity), rounded down. The image refuses to start
+   without it. Compiled code is capped at 64 MiB
+   (`-XX:ReservedCodeCacheSize=64m`; peak use was 54 MiB), so non-heap memory
+   has a known ceiling. The rest of the flags are unchanged (`SerialGC`,
+   `ExitOnOutOfMemoryError`).
+2. Limits are raised where the budget does not fit, in every environment,
+   because the need comes from the application and not from the host:
+
+   | Service | `mem_limit` | `JVM_HEAP` |
+   |---|---|---|
+   | identity | 768 MiB (was 640; PROD was already 768) | 464 MiB |
+   | order, shipping | 448 MiB (was 320) | 208 MiB |
+   | billing, catalog, inventory, notification, ops | 384 MiB (was 320) | 144 MiB |
+   | testkit (DEV) | 384 MiB | 176 MiB |
+   | simulators (DEV) | 320 MiB (was 256) | 144 MiB |
+   | controller (DEV) | 320 MiB | 152 MiB |
+   | Tempo | 512 MiB (was 320) | — |
+
+3. The DEV HA stack's limits now add up to about 12.5 GiB. The Docker VM
+   must have more than that for a load run. `load-baseline.py` refuses to
+   start when the running containers' limits exceed the VM's memory
+   (`--overcommit` runs anyway and says so in the report). It also marks a
+   step during which any container was killed or restarted as not a
+   measurement. It does not run such a step again, because the load caused
+   the kill.
+
+**Consequences.** A service killed for memory is now a sizing error to fix
+here, not noise in a run. Heap and limit are two numbers to change together.
+Compose keeps them side by side, and this record holds the measurements they
+came from. On the development machine, Docker Desktop needs about 14 GiB
+(`.wslconfig` `memory=`) for the load baseline; the README asks for 14 GB.
+`glibc`'s `MALLOC_ARENA_MAX` does not apply: the image is Alpine (musl).
+ADR-035's sizing rule ("the heap is 60% of `mem_limit`") is replaced by
+item 1. Its hashing values are unchanged, and PROD's 8 fit identity's 464 MiB
+heap (about 200 MiB + 8 × 19 MiB).
+
+**Rejected.** Only raising the limits and keeping 60%: the heap grows with the
+limit and the non-heap share stays short. A lower percentage for everyone: the
+non-heap need is nearly constant (about 230 MiB) while limits differ, so no
+one percentage fits both a 320 MiB and a 768 MiB container. Capping metaspace:
+it is the application's own classes, so a cap would only turn a kill into an
+`OutOfMemoryError` at the same moment. Cutting DEV's trace sampling to save
+Tempo's memory: DEV keeps full traces for the experiments' evidence.
