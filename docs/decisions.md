@@ -136,7 +136,9 @@ Unknown event types and events that no longer apply are skipped, not failed.
 **Consequences.** Poison records cost at most ~4 s of one partition once. Dead
 letters are visible, alerted on, browsable and replayable from the ops console.
 In-place retries delay the records behind the failing one on that partition by
-the retry time.
+the retry time. Amended by
+[ADR-030](#adr-030-infrastructure-failures-are-retried-not-dead-lettered): a
+failure of the service's own database is retried until it clears.
 
 **Rejected.** Infinite retry — one bad record halts a partition. Skip and log —
 loses data silently. Non-blocking retry topics — keep the partition moving during
@@ -611,3 +613,59 @@ weakened, and its test suite passes unchanged (plus two tests for the bound).
 
 **Rejected.** Cheaper Argon2 parameters — weakens stored passwords. Relying on
 the edge's per-IP limits — a distributed burst passes them.
+
+## ADR-030: Infrastructure failures are retried, not dead-lettered
+
+**Context.** Found while building the database-outage experiment (milestone 9b):
+under ADR-005 a handler failure is retried three times over about four seconds
+and then dead-lettered. When a service's database is away for twenty seconds,
+every event it receives meanwhile fails that way — so a short outage would park
+real orders' events on dead-letter topics, and their sagas would stall until an
+operator replayed them.
+
+**Decision.** `KafkaErrorHandling` tells the service's own infrastructure apart
+from the event: when the failure is a Spring `TransientDataAccessException`,
+`DataAccessResourceFailureException` or `CannotCreateTransactionException`, or a
+JDBC transient or recoverable exception, the record is retried from 1 s,
+doubling to 30 s, with no limit, and the partition waits. Everything else keeps
+ADR-005's three retries and dead letter. HTTP requests that hit the same
+failures get `503` with `Retry-After` from the messaging module's
+`DatabaseUnavailableHandler`, instead of a `500`.
+
+**Consequences.** A database outage delays events; it does not lose or park
+them, and the services catch up without help. A consumer whose database stays
+away holds its partitions and its lag grows — which is what alerts on. A bug
+that happens to throw one of these exceptions would be retried for ever rather
+than dead-lettered; the lag alert surfaces that too.
+
+**Rejected.** More retries for everything — a poison event would block its
+partition for as long. Pausing the listener container on a failed health check
+— more moving parts for the same result.
+
+## ADR-031: Refunds are queued and retried until made
+
+**Context.** Found by the resilience experiments (milestone 9b). Billing called
+the provider's refund inside the event's handling (before the transaction, as
+ADR-015 requires), so a refund the provider could not take was retried three
+times in about four seconds and dead-lettered. When the payment simulator was
+unreachable for a moment, three returned orders were left `RETURNED` with their
+payments still `AUTHORIZED`: the customers would not have been refunded until
+an operator noticed and replayed the dead letters. Retrying in the consumer
+until the provider is back (as ADR-030 does for the database) would instead
+block every charge behind the refund on that partition for the whole outage.
+
+**Decision.** `order.cancelled` and `order.returned` only queue the refund: in
+the event's transaction the payment moves `AUTHORIZED` → `REFUND_PENDING`.
+`RefundWorker` leases due refunds (`FOR UPDATE SKIP LOCKED`, as shipping and
+notification do), calls the provider outside any transaction with the same
+idempotency key (`refund-<orderId>`), and in one transaction marks the payment
+`REFUNDED` and emits `payment.refunded`. A failure is retried 5 s, doubling to
+5 min, with no limit; attempts and the last error are kept on the payment and
+shown in the back office. Migration `V2__refund_queue.sql`.
+
+**Consequences.** A provider outage delays refunds and never loses them;
+charges carry on (or fail fast as `PAYMENT_UNAVAILABLE`) meanwhile. A refund
+the provider refuses for good (it no longer knows the charge, say) is retried
+every 5 min and raises `RefundsStuck` after 15 min for an operator, instead of
+sitting on a dead-letter topic. The ledger audit counts a refund still queued
+after the system settles as a failure.

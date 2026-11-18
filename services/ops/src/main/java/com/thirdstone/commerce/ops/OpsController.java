@@ -76,6 +76,7 @@ class OpsController {
         config.put("environment", environment);
         config.put("testkit", testkit.available());
         config.put("instanceControl", controllerClient.available());
+        config.put("experiments", controllerClient.available());
         config.put("grafanaUrl", props.grafanaUrl());
         config.put("services", props.services());
         config.put("replayRequiresMfa", props.replayRequiresMfa());
@@ -186,6 +187,71 @@ class OpsController {
     @PostMapping("/instances/{id}/{action}")
     tools.jackson.databind.JsonNode act(Caller caller, @PathVariable String id, @PathVariable String action) {
         return instancesView.act(caller, id, action);
+    }
+
+    // ------------------------------------------------- resilience proofs (DEV only)
+
+    private static final java.util.regex.Pattern EXPERIMENT = java.util.regex.Pattern.compile("^[a-z0-9-]{1,64}$");
+    private static final java.util.regex.Pattern RUN = java.util.regex.Pattern.compile("^[A-Za-z0-9-]{1,64}$");
+
+    record ExperimentNames(List<String> names) {
+    }
+
+    @GetMapping("/experiments")
+    tools.jackson.databind.JsonNode experiments(Caller caller) {
+        caller.requireAdmin();
+        return controllerClient.experiments("");
+    }
+
+    @GetMapping("/experiments/runs")
+    tools.jackson.databind.JsonNode experimentRuns(Caller caller) {
+        caller.requireAdmin();
+        return controllerClient.experiments("/runs");
+    }
+
+    @GetMapping("/experiments/runs/{id}")
+    tools.jackson.databind.JsonNode experimentRun(Caller caller, @PathVariable String id) {
+        caller.requireAdmin();
+        return controllerClient.experiments("/runs/" + checked(RUN, id));
+    }
+
+    /** The run as Markdown, to attach to a ticket or a pull request. */
+    @GetMapping(path = "/experiments/runs/{id}/report", produces = "text/markdown")
+    String experimentReport(Caller caller, @PathVariable String id) {
+        caller.requireAdmin();
+        return controllerClient.experimentReport(checked(RUN, id));
+    }
+
+    @PostMapping("/experiments/{name}/run")
+    tools.jackson.databind.JsonNode runExperiment(Caller caller, @PathVariable String name) {
+        caller.requireAdmin();
+        tools.jackson.databind.JsonNode runs = controllerClient.startExperiments("/" + checked(EXPERIMENT, name) + "/run",
+                null, caller.email());
+        incidents.operatorAction(caller.email(), "Experiment", null, caller.email() + " started experiment " + name);
+        return runs;
+    }
+
+    /** Runs the named experiments in order, or with no names the whole catalogue. */
+    @PostMapping("/experiments/run")
+    tools.jackson.databind.JsonNode runExperiments(Caller caller, @RequestBody(required = false) ExperimentNames body) {
+        caller.requireAdmin();
+        List<String> names = body == null || body.names() == null ? List.of() : body.names();
+        if (names.size() > 100) {
+            throw ApiException.badRequest("At most 100 experiments at once");
+        }
+        names.forEach(n -> checked(EXPERIMENT, n));
+        tools.jackson.databind.JsonNode runs = controllerClient.startExperiments("/run-all", Map.of("names", names),
+                caller.email());
+        incidents.operatorAction(caller.email(), "Experiment", null, caller.email() + " started "
+                + (names.isEmpty() ? "the whole catalogue" : names.size() + " experiments: " + String.join(", ", names)));
+        return runs;
+    }
+
+    private static String checked(java.util.regex.Pattern pattern, String value) {
+        if (!pattern.matcher(value).matches()) {
+            throw ApiException.notFound("Experiment");
+        }
+        return value;
     }
 
     /** DEV only: the testkit's API (shoppers, chaos lab). Absent (404) anywhere else. */

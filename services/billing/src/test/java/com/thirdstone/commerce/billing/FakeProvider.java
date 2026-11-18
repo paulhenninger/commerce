@@ -18,6 +18,8 @@ final class FakeProvider {
     }
 
     static final List<Call> CALLS = new CopyOnWriteArrayList<>();
+    /** The next this many refund calls answer 503, as if the provider were away. */
+    static final java.util.concurrent.atomic.AtomicInteger REFUNDS_DOWN = new java.util.concurrent.atomic.AtomicInteger();
     private static final HttpServer SERVER;
 
     static {
@@ -41,6 +43,9 @@ final class FakeProvider {
             } else if (body.contains("tok_decline")) {
                 status = 402;
                 answer = "{\"code\":\"DECLINED\"}";
+            } else if (path.endsWith("/refunds") && REFUNDS_DOWN.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                status = 503;
+                answer = "{}";
             } else if (path.endsWith("/refunds")) {
                 status = 201;
                 answer = "{\"id\":\"re_1\"}";

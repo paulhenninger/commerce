@@ -137,6 +137,28 @@ class BillingIntegrationTest {
     }
 
     @Test
+    void aRefundTheProviderCannotTakeIsQueuedAndMadeWhenItIsBack() {
+        var request = requestPayment("tok_visa");
+        bus.await(BillingEvents.AUTHORIZED, request.orderId(), BillingEvents.Authorized.class);
+        // The provider is away for the first attempt (the client's call and its one quick retry).
+        FakeProvider.REFUNDS_DOWN.set(2);
+        bus.publish(OrderEvents.RETURNED, request.orderId(), new OrderEvents.Returned(request.orderId(), 5,
+                "a@example.com", java.util.List.of(new com.thirdstone.commerce.platform.events.Line("LAMP", "Lamp", 1, 2500)), 2500, "USD"));
+        await().atMost(java.time.Duration.ofSeconds(20)).until(() -> jdbc.sql(
+                "SELECT refund_attempts FROM payments WHERE order_id = ?").param(request.orderId())
+                .query(Integer.class).single() >= 1);
+        assertThat(paymentStatus(request.orderId())).isEqualTo("REFUND_PENDING");
+        BillingEvents.Refunded refunded = bus.await(BillingEvents.REFUNDED, request.orderId(), BillingEvents.Refunded.class);
+        assertThat(refunded.amountCents()).isEqualTo(2500);
+        assertThat(paymentStatus(request.orderId())).isEqualTo("REFUNDED");
+        assertThat(FakeProvider.callsFor(request.orderId())).extracting(FakeProvider.Call::idempotencyKey)
+                .containsExactly("charge-" + request.orderId(), "refund-" + request.orderId(),
+                        "refund-" + request.orderId(), "refund-" + request.orderId());
+        assertThat(bus.types(Topics.BILLING, request.orderId())).containsExactly(BillingEvents.AUTHORIZED,
+                BillingEvents.REFUNDED);
+    }
+
+    @Test
     void cancellationOfAFailedPaymentRefundsNothing() {
         var request = requestPayment("tok_decline");
         bus.await(BillingEvents.FAILED, request.orderId(), BillingEvents.Failed.class);

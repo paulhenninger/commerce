@@ -11,3 +11,11 @@ commerce:
     api-version: ${DOCKER_API_VERSION:v1.47}
     # The Compose project whose containers may be acted on.
     project: ${COMPOSE_PROJECT:}
+  experiments:
+    prometheus-url: ${PROMETHEUS_URL:http://prometheus:9090}
+    testkit-url: ${TESTKIT_URL:http://testkit:8080}
+    storefront-url: ${STOREFRONT_URL:http://storefront-web:8080}
+    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:admin@example.com}
+    admin-password: ${DEV_ADMIN_PASSWORD:}
+    state-dir: ${CONTROLLER_STATE_DIR:/var/lib/commerce}
+    saga-timeout: ${ORDER_SAGA_TIMEOUT:2m}

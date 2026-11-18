@@ -33,5 +33,9 @@ class ContractTapTest {
                 .containsEntry("chaos " + Topics.INVENTORY + " unparseable", 1L)
                 .containsEntry("real " + Topics.ORDER + " inventory.reserved", 1L)
                 .hasSize(3);
+        // Only the real, valid record is kept for the DUPLICATE producer to replay, byte for byte.
+        assertThat(tap.recent(Topics.INVENTORY, 10)).singleElement()
+                .satisfies(r -> assertThat(r.value()).isEqualTo(good.value()));
+        assertThat(tap.recent(Topics.ORDER, 10)).isEmpty();
     }
 }

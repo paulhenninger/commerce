@@ -4,6 +4,7 @@ import { Rail } from './components/Rail';
 import { OpsConfigProvider, useOpsConfig } from './components/OpsConfig';
 import BusinessPage from './pages/BusinessPage';
 import InstancesPage from './pages/InstancesPage';
+import ProofsPage from './pages/ProofsPage';
 import ChaosPage from './pages/ChaosPage';
 import SimulatorPage from './pages/SimulatorPage';
 import IncidentsPage from './pages/IncidentsPage';
@@ -68,6 +69,7 @@ function Console() {
           <Route path="/services/:name" element={<ServicePage />} />
           <Route path="/kafka" element={<KafkaPage />} />
           <Route path="/instances" element={<InstancesPage />} />
+          <Route path="/proofs" element={<ProofsPage />} />
           <Route path="/business" element={<BusinessPage />} />
           <Route path="/incidents" element={<IncidentsPage />} />
           <Route path="/incidents/:id" element={<IncidentsPage />} />

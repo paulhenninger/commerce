@@ -104,8 +104,8 @@ public class PaymentGatewayClient {
 
     /**
      * Gives the money back. Throws {@link ProviderUnavailableException} if the
-     * provider cannot be reached: the event is then retried and, failing that,
-     * dead-lettered for replay — a refund is never silently dropped.
+     * provider cannot be reached: RefundWorker tries again later, for as long as
+     * it takes — a refund is never dropped.
      */
     public String refund(String orderId, String chargeRef, long amountCents) {
         try {
