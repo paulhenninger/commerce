@@ -42,6 +42,7 @@ Change a decision by adding a new record that supersedes it, not by editing hist
 | [033](#adr-033-dev-simulations-are-off-until-switched-on) | DEV simulations are off until switched on | Accepted (design; milestone 10a) |
 | [034](#adr-034-the-load-baseline-is-measured-locally-github-is-optional) | The load baseline is measured locally; GitHub is optional | Accepted |
 | [035](#adr-035-the-password-hashing-bound-is-set-per-environment) | The password-hashing bound is set per environment | Accepted |
+| [036](#adr-036-the-latency-targets-stay-this-machines-capacity-is-recorded-beside-them) | The latency targets stay; this machine's capacity is recorded beside them | Accepted (capacity filled in from the baseline of record) |
 
 ---
 
@@ -820,3 +821,30 @@ attacker, are unchanged in every environment, so this weakens no control.
 low for a production host. An unbounded or very high value in PROD. That
 reopens ADR-029's denial of service. Cheaper Argon2 parameters in DEV. They
 would make DEV's passwords unlike production's, and the hashes would differ.
+
+## ADR-036: The latency targets stay; this machine's capacity is recorded beside them
+
+**Context.** Milestone 11 measures the targets in architecture §8 on the
+development machine (ADR-034). The first runs show the shared MySQL's commit
+path as the bottleneck, not CPU. The configuration is fully durable
+(`innodb_flush_log_at_trx_commit=1`, `sync_binlog=1`), and one synchronous
+4 KiB write on Docker Desktop's volume takes 12–15 ms, against well under 1 ms
+on a Linux NVMe disk. On this machine `POST /orders` p95 is over 250 ms from
+3 orders/s, and place → confirmed p95 is over 3 s from about 15/s.
+
+**Decision** (owner, 2026-11-18). The three targets stay as they are and keep
+setting the production alert thresholds: catalog reads p95 < 100 ms at the
+edge, `POST /orders` p95 < 250 ms, place → confirmed p95 < 3 s. Architecture §8
+records, beside them, this machine's measured capacity: for each target, the
+highest rate at which the baseline of record met it, the host it ran on, and
+the bottleneck that ended it. The bottleneck is said to be Docker Desktop's
+when it is.
+
+**Consequences.** On this machine the targets are not met at every rate, and
+§8 says so rather than moving the thresholds to fit. The capacity figures
+describe one Windows/Docker Desktop host. A Linux run (`load.yml`), when made,
+is recorded beside them, not in place of them. Production alerts keep their
+meaning.
+
+**Rejected.** Replacing the targets with the measured numbers. That would
+build Docker Desktop's fsync time into production's alert thresholds.

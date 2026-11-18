@@ -525,11 +525,13 @@ requests and the current Kafka batch (20 s budget), and exits.
 | Keep-alive upstream connections; gzip; immutable hashed assets | edges |
 | Pagination capped at 50 per page | list endpoints |
 
-Targets used for alert thresholds and capacity checks (not yet measured — see
-the implementation plan's load-test step; measured locally on the DEV HA stack,
-with a GitHub-runner run optional, [ADR-034](decisions.md#adr-034-the-load-baseline-is-measured-locally-github-is-optional)): catalog reads p95 < 100 ms at the
-edge; `POST /orders` p95 < 250 ms; place → confirmed p95 < 3 s with a healthy
-payment provider.
+Targets used for alert thresholds and capacity checks: catalog reads p95 <
+100 ms at the edge; `POST /orders` p95 < 250 ms; place → confirmed p95 < 3 s
+with a healthy payment provider. They are production's targets and stay
+fixed ([ADR-036](decisions.md#adr-036-the-latency-targets-stay-this-machines-capacity-is-recorded-beside-them)).
+Beside them, the capacity measured on the development machine (DEV HA stack,
+[ADR-034](decisions.md#adr-034-the-load-baseline-is-measured-locally-github-is-optional)): the highest rate at which each target was met, the host, and the
+bottleneck. These are filled in from milestone 11's baseline of record.
 
 ## 9. Observability
 
