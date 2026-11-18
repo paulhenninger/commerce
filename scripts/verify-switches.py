@@ -57,7 +57,17 @@ def fail(name, detail=''):
     sys.exit(1)
 
 
-def call(method, path, body=None, base=CONSOLE, auth=True):
+def call(method, path, body=None, base=CONSOLE, auth=True, again=True):
+    code, answer = _call(method, path, body, base, auth)
+    # An access token is short-lived; after a long pause (or the host sleeping)
+    # sign in again once, as an operator would.
+    if code == 401 and auth and again and path != '/api/v1/auth/login':
+        sign_in()
+        code, answer = _call(method, path, body, base, auth)
+    return code, answer
+
+
+def _call(method, path, body, base, auth):
     request = urllib.request.Request(base + path, method=method,
                                      data=None if body is None else json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json', 'X-Commerce-Client': 'web',
@@ -95,6 +105,14 @@ def wait(name, check, timeout, every=3):
         if value:
             return value
         time.sleep(every)
+    # Once more after the deadline: when the host sleeps (Windows Modern
+    # Standby) the clock jumps past it while nothing could run.
+    try:
+        value = check()
+    except Exception:  # noqa: BLE001
+        value = None
+    if value:
+        return value
     fail(name, f'not true after {timeout} s')
 
 
@@ -134,39 +152,44 @@ def restart_testkit():
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--quiet-minutes', type=int, default=10)
+parser.add_argument('--skip-fresh', action='store_true',
+                    help='skip section 1 (needs a fresh stack); start at test data')
 args = parser.parse_args()
 
-print('A fresh stack has nothing switched on')
-wait('the testkit has made the administrator', lambda: (sign_in(), (status() or {}).get('adminReady'))[1], 300)
-ok('the administrator was made at startup and signs in')
-code, users = call('GET', '/api/v1/admin/users?size=50', base=SHOP)
-# Identity is Bastion: its pages are Spring's shape (totalElements), not this system's.
-if code != 200 or users.get('totalElements') != 1:
-    fail('it is the only account', f'{code} {users}')
-ok('it is the only account')
-code, _ = call('POST', '/api/v1/auth/login', {'email': 'shopper@example.com',
-                                              'password': ENV['DEV_SHOPPER_PASSWORD']}, auth=False)
-if code == 200:
-    fail('shopper@example.com does not exist yet')
-ok('shopper@example.com does not exist yet')
-if products() != 0:
-    fail('the catalog is empty', f'{products()} products')
-ok('the catalog is empty')
-s = status()
-switches = s['switches']
-if s['testData'] or switches['shoppers']['count'] != 0 or switches['actors'] \
-        or any(f.get('outage') or f.get('latencyMs') or f.get('errorRate') for f in switches['faults'].values()):
-    fail('test data, shoppers, actors and faults are all off', json.dumps(switches))
-ok('test data, shoppers, actors and faults are all off')
-print(f'  ...   watching for {args.quiet_minutes} min', flush=True)
-time.sleep(args.quiet_minutes * 60)
-window = f'{args.quiet_minutes}m'
-published = prom(f'sum(increase(commerce_outbox_published_total[{window}]))')
-written = prom(f'sum(max_over_time(commerce_kafka_topic_end_offset[{window}]) '
-               f'- min_over_time(commerce_kafka_topic_end_offset[{window}]))')
-if published > 0.5 or written > 0.5:
-    fail(f'no event was written in {window}', f'{published:.0f} published by services, {written:.0f} records on topics')
-ok(f'no event was written anywhere in {args.quiet_minutes} min')
+if args.skip_fresh:
+    wait('the administrator signs in', lambda: (sign_in(), True)[1], 60)
+else:
+    print('A fresh stack has nothing switched on')
+    wait('the testkit has made the administrator', lambda: (sign_in(), (status() or {}).get('adminReady'))[1], 300)
+    ok('the administrator was made at startup and signs in')
+    code, users = call('GET', '/api/v1/admin/users?size=50', base=SHOP)
+    # Identity is Bastion: its pages are Spring's shape (totalElements), not this system's.
+    if code != 200 or users.get('totalElements') != 1:
+        fail('it is the only account', f'{code} {users}')
+    ok('it is the only account')
+    code, _ = call('POST', '/api/v1/auth/login', {'email': 'shopper@example.com',
+                                                  'password': ENV['DEV_SHOPPER_PASSWORD']}, auth=False)
+    if code == 200:
+        fail('shopper@example.com does not exist yet')
+    ok('shopper@example.com does not exist yet')
+    if products() != 0:
+        fail('the catalog is empty', f'{products()} products')
+    ok('the catalog is empty')
+    s = status()
+    switches = s['switches']
+    if s['testData'] or switches['shoppers']['count'] != 0 or switches['actors'] \
+            or any(f.get('outage') or f.get('latencyMs') or f.get('errorRate') for f in switches['faults'].values()):
+        fail('test data, shoppers, actors and faults are all off', json.dumps(switches))
+    ok('test data, shoppers, actors and faults are all off')
+    print(f'  ...   watching for {args.quiet_minutes} min', flush=True)
+    time.sleep(args.quiet_minutes * 60)
+    window = f'{args.quiet_minutes}m'
+    published = prom(f'sum(increase(commerce_outbox_published_total[{window}]))')
+    written = prom(f'sum(max_over_time(commerce_kafka_topic_end_offset[{window}]) '
+                   f'- min_over_time(commerce_kafka_topic_end_offset[{window}]))')
+    if published > 0.5 or written > 0.5:
+        fail(f'no event was written in {window}', f'{published:.0f} published by services, {written:.0f} records on topics')
+    ok(f'no event was written anywhere in {args.quiet_minutes} min')
 
 print('Test data')
 call('PUT', f'{T}/test-data', {'on': True})
