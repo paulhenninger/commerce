@@ -16,6 +16,7 @@ Each step sets the shoppers' rate, lets it settle (--ramp s), then measures over
   saturation      5xx share, consumer lag per group, DB pool waits, CPU per
                   service, and whether the load generator itself kept up
                   (skipped_busy: then the step measured the testkit, not the shop)
+  email           the oldest unsent email's age (notification's backlog)
   MySQL           row-lock wait and redo-log fsyncs per second; the report's
                   header has the fsync time of MySQL's volume on this host
 
@@ -146,6 +147,7 @@ def measure(w, rate):
     m['jvm_cpu_cores'] = by(f'sum by (service) (avg_over_time(process_cpu_usage{{job="services"}}[{w}]) * on (instance) group_left system_cpu_count{{job="services"}})', 'service')
     m['row_lock_ms_per_s'] = count(f'sum(rate(mysql_global_status_innodb_row_lock_time[{w}]))')
     m['redo_fsyncs_per_s'] = count(f'sum(rate(mysql_global_status_innodb_os_log_fsyncs[{w}]))')
+    m['email_backlog_s'] = count(f'max(max_over_time(commerce_notifications_oldest_pending_age_seconds[{w}]))')
     m['busy_skips_per_s'] = count(f'sum(rate(commerce_testkit_shopper_actions_total{{outcome="skipped_busy"}}[{w}]))')
     m['container_cpu'] = container_cpu()
     return m
@@ -262,6 +264,7 @@ def report(started, args, results):
         lines.append(f"- **{m['target_per_s']:.1f}/s** — lag {json.dumps({k: int(v) for k, v in m['lag_max'].items()})}; "
                      f"pool waits {json.dumps({k: int(v) for k, v in m['pool_pending_max'].items() if v})}; "
                      f"JVM CPU cores {json.dumps({k: round(v, 2) for k, v in m['jvm_cpu_cores'].items()})}; "
+                     f"oldest unsent email {m['email_backlog_s']:.0f} s; "
                      f"busiest containers (cores) {', '.join(f'{k} {v:.2f}' for k, v in top)}")
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     print('\n'.join(lines))

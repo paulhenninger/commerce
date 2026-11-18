@@ -26,3 +26,7 @@ services:
       TRACE_SAMPLING: ${TRACE_SAMPLING:-0.1}
       ADMIN_REQUIRES_MFA: "true"
       OPS_REQUIRE_MFA: "true"
+    # Room for MAX_CONCURRENT_HASHES=8 (prod.env): the heap is 60% of this and
+    # needs ~200 MiB + 8 x 19 MiB; the rest holds non-heap, stacks and /tmp.
+    # Raise both together (ADR-035).
+    mem_limit: 768m

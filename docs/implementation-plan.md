@@ -49,7 +49,17 @@ once (their access tokens expire together), identity can hit its 640 MiB
 `mem_limit` and is killed without a log line: identity-2 at 16:23 UTC, and
 identity-1 at 630 MiB afterwards. The JVM gets 60% of the container for heap
 (371 MiB), about 163 MiB non-heap, thread stacks and a 64 MiB `/tmp` tmpfs, and
-concurrent Argon2id hashes take about 19 MiB of heap each. Open: ask the owner.
+concurrent Argon2id hashes take about 19 MiB of heap each. The hashing bound
+is now set per environment (ADR-035: DEV 2, INT/QA 4, PROD 8 with 768 MiB).
+DEV identity's 640 MiB is still tight, and the next baseline run shows whether
+2 is enough.
+
+Email is a second limit. Notification sends about 15 emails/s to Mailpit. The
+runs above produce more than that from 10 orders/s up (several emails per
+order), and at 17:13 UTC 15,317 were still pending, the oldest 72 minutes old.
+`smoke.sh`'s email checks wait 30 s, so they fail until that backlog drains.
+The backlog delays emails only; it holds up no order. The next baseline run
+should report notification's pending count and oldest age per step.
 
 Milestone 10a acceptance (2026-11-18): `verify-switches.py` on a fresh DEV
 stack — one account, empty catalog, every switch off, no event written for

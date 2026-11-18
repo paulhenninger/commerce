@@ -264,11 +264,15 @@ services:
       SIGNUP_CHECK_MX: ${SIGNUP_CHECK_MX:-true}
       ADMIN_REQUIRES_MFA: ${ADMIN_REQUIRES_MFA:-true}
       OPS_REQUIRE_MFA: ${OPS_REQUIRE_MFA:-true}
+      # Argon2id hashes one replica runs at once (~19 MiB of heap and ~50 ms of a
+      # core each); more wait up to 10 s, then 503 BUSY. Per environment: ADR-035.
+      MAX_CONCURRENT_HASHES: ${MAX_CONCURRENT_HASHES:-4}
       OTLP_TRACES_ENDPOINT: http://alloy:4318/v1/traces
       TRACE_SAMPLING: ${TRACE_SAMPLING:-1.0}
       LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     # Spring Security, Hibernate and up to MAX_CONCURRENT_HASHES Argon2 hashes
-    # (~19 MiB each): 448 MiB thrashed under twenty simulated shoppers.
+    # (~19 MiB each): 448 MiB thrashed under twenty simulated shoppers. Enough
+    # for 4; PROD runs 8 and raises this (compose.prod.yml, ADR-035).
     mem_limit: 640m
 
   catalog:

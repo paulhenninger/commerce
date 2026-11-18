@@ -40,6 +40,8 @@ Change a decision by adding a new record that supersedes it, not by editing hist
 | [031](#adr-031-refunds-are-queued-and-retried-until-made) | Refunds are queued and retried until made | Accepted |
 | [032](#adr-032-a-public-repository) | The repository is public | Accepted |
 | [033](#adr-033-dev-simulations-are-off-until-switched-on) | DEV simulations are off until switched on | Accepted (design; milestone 10a) |
+| [034](#adr-034-the-load-baseline-is-measured-locally-github-is-optional) | The load baseline is measured locally; GitHub is optional | Accepted |
+| [035](#adr-035-the-password-hashing-bound-is-set-per-environment) | The password-hashing bound is set per environment | Accepted |
 
 ---
 
@@ -755,3 +757,66 @@ place of it.
 
 **Rejected.** GitHub only — the owner wants the run under their own control.
 Deleting `load.yml` — the owner wants a Linux run possible later.
+
+## ADR-035: The password-hashing bound is set per environment
+
+**Context.** ADR-029 bounds how many Argon2id hashes identity runs at once
+(`MAX_CONCURRENT_HASHES`, Bastion's `security.max-concurrent-hashes`, default
+4), but compose never passed the setting, so every environment got 4. The
+right value depends on the host. During milestone 11 a DEV replica hit its
+640 MiB container limit and was killed. The cause was a burst of sign-ins,
+because every simulated shopper's access token expired at the same moment. A
+production replica with dedicated cores and memory can afford more.
+
+**What the value is.** The value applies to each identity replica: it is how
+many password hashes or checks (sign-up, sign-in, password change and reset)
+that replica runs at the same moment. Each takes about 19 MiB of heap and about
+50 ms of one core. A request beyond the bound waits for a free slot, up to
+10 s, and then gets `503 BUSY` ("try again"). The value sets three things:
+
+- memory for hashing: about value × 19 MiB of heap;
+- password checks per second per replica: about value ÷ 0.05 s, as long as
+  the replica has that many cores;
+- database connections held while waiting: Bastion checks the password inside
+  its transaction, so a queued request holds one of the 20 in the pool
+  (`DB_POOL_SIZE`).
+
+**Decision** (owner, 2026-11-18). Compose passes `MAX_CONCURRENT_HASHES`
+through, and each environment's settings file sets its own value:
+
+| Environment | Value | Why |
+|---|---|---|
+| DEV | 2 | Every service shares one laptop's Docker VM, and identity has 640 MiB. Two replicas still check about 80 passwords/s, so 200 simulated shoppers signing in at once clear in about 2.5 s, well inside the 10 s wait |
+| INT, QA | 4 | Bastion's default, in the same 640 MiB as DEV |
+| PROD | 8 | Recommended starting point, with identity's `mem_limit` raised to 768 MiB in `compose.prod.yml` |
+
+**Recommended for production.** Size the value to the identity replica, not
+to expected traffic:
+
+1. Use about one per core the replica can count on. A hash is CPU-bound, so a
+   value above that only makes each hash slower, not more of them.
+2. Keep it at or below half of `DB_POOL_SIZE`, so that sign-ins waiting for a
+   slot never starve the rest of identity of connections.
+3. Make sure it fits the container. The heap is 60% of `mem_limit`
+   (`-XX:MaxRAMPercentage=60`), and it needs about 200 MiB for the application
+   plus value × 19 MiB. The other 40% has to hold about 165 MiB of non-heap
+   memory, thread stacks and the 64 MiB `/tmp`. For 8 that is 768 MiB. For 16
+   (eight dedicated cores) raise `DB_POOL_SIZE` to at least 32 and `mem_limit`
+   to about 1 GiB.
+4. Add capacity with replicas (each has its own bound), not by raising the
+   value past the cores.
+5. Watch for `503 BUSY` on sign-in and for identity's heap. Persistent `BUSY`
+   under real traffic means more replicas, not a higher value on the same
+   container.
+
+**Consequences.** DEV queues sign-in bursts sooner and uses less heap for
+them. That lowers the pressure, but DEV identity's headroom in 640 MiB is
+still thin (implementation plan §1). PROD checks twice as many passwords per
+replica and has the memory for them. A value of 0 or below fails at startup,
+as it already did. Argon2's parameters, and so the cost of each guess for an
+attacker, are unchanged in every environment, so this weakens no control.
+
+**Rejected.** One value for every environment. Too high for a laptop, or too
+low for a production host. An unbounded or very high value in PROD. That
+reopens ADR-029's denial of service. Cheaper Argon2 parameters in DEV. They
+would make DEV's passwords unlike production's, and the hashes would differ.
