@@ -1,6 +1,14 @@
 # Configuration
 
-Everything is set by environment variable (or `.env` with Docker Compose).
+> **In this repository** identity is `services/identity`, served by the
+> `storefront-web` edge (`web/storefront`), started with the rest of the system by
+> `scripts/stack.sh` from `deploy/`. Bastion's single-app layout maps as:
+> `docker-compose.yml` → `deploy/compose.yml`; `.env` → `deploy/env/<env>.env`;
+> `db/roles.sql` → `deploy/mysql/roles.sql`; `frontend/` → `web/storefront/`;
+> `Dockerfile` → `services/Dockerfile`; the `db` and `web` containers →
+> `mysql` and `storefront-web`. System-wide settings: [../configuration.md](../configuration.md).
+
+Everything is set by environment variable (with Compose, from `deploy/env/<env>.env`).
 Defaults are chosen to be safe; the only values you **must** set are the two
 secrets.
 
@@ -77,8 +85,8 @@ secrets.
 | Variable | Default | Description |
 |---|---|---|
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | `localhost` / `3306` / `commerce` | MySQL 9.7 LTS (8.4 LTS also works). |
-| `DB_USER` / `DB_PASS` | `commerce` / `commerce` | The login the app runs as. Give it `SELECT, INSERT, UPDATE, DELETE` on this schema and nothing else — [`db/roles.sql`](../db/roles.sql) creates `commerce_app` that way (`.env.example` uses it). |
-| `SPRING_FLYWAY_USER` / `SPRING_FLYWAY_PASSWORD` | the `DB_` login | A separate login for migrations at startup, with DDL rights on this schema only (`commerce_owner` in `db/roles.sql`). Its connection is not pooled and closes after migrating. Unset, migrations run as `DB_USER`, which then needs DDL rights. |
+| `DB_USER` / `DB_PASS` | `commerce` / `commerce` | The login the app runs as. Give it `SELECT, INSERT, UPDATE, DELETE` on this schema and nothing else — [`deploy/mysql/roles.sql`](../../deploy/mysql/roles.sql) creates `identity_app` that way (`deploy/compose.yml` uses it). |
+| `SPRING_FLYWAY_USER` / `SPRING_FLYWAY_PASSWORD` | the `DB_` login | A separate login for migrations at startup, with DDL rights on this schema only (`identity_owner`, from `deploy/mysql/roles.sql`). Its connection is not pooled and closes after migrating. Unset, migrations run as `DB_USER`, which then needs DDL rights. |
 | `DB_PARAMS` | — | Appended to the JDBC URL. Production: `&sslMode=VERIFY_IDENTITY`. (Compose: `&sslMode=REQUIRED` — its database refuses unencrypted connections.) |
 | `DB_ADMIN_PASSWORD` | `commerce` | Compose only: the MySQL root password. Root can sign in only from inside the database container; the app never uses it. |
 | `DB_POOL_SIZE` | `20` | Hikari pool size. |

@@ -1,7 +1,9 @@
 # Operations: discovering, alerting, tracking and debugging issues
 
-> This is the operating model as designed. Thresholds are starting points to be
-> replaced by measured values (implementation plan, milestone 11). Identity's own
+> The operating model, refreshed with what the resilience experiments observed
+> on the DEV HA topology (section 8, milestone 9b). Alert thresholds are still
+> starting points, to be replaced by measured values (implementation plan,
+> milestone 11). Identity's own
 > operations guide — keys, production checklist, incident response for accounts —
 > is [identity/operations.md](identity/operations.md).
 
@@ -248,28 +250,39 @@ lock is released when its connection closes).
 
 A breaker is open: the payment provider or carrier is failing. Confirm with
 `commerce_external_calls_seconds` by outcome and the provider's status page.
-Payment: new orders are being cancelled with `PAYMENT_UNAVAILABLE` — decide
-whether to put up a banner. Carrier: shipments queue and resume by themselves.
+Payment: new orders are being cancelled with `PAYMENT_UNAVAILABLE` and nobody
+is charged — decide whether to put up a banner. Refunds are not lost: they stay
+`REFUND_PENDING` and `RefundWorker` retries them until the provider takes them
+(ADR-031); a refund the provider answers `404` for (a charge it no longer knows)
+stays queued and needs a person. Carrier: shipments queue and resume by themselves.
 The breaker closes by itself when calls succeed again. In dev, check the chaos
 lab — someone may have injected the fault.
 
 ### Runbook: email not sending
 
 Notification service detail: SMTP errors in its logs. Pending emails are retried
-for 24 h, so a short relay outage needs no action. `FAILED` rows can be reset to
+with backoff (1 min doubling to 1 h, `FAILED` after 30 attempts, about a day), so
+a short relay outage needs no action. `FAILED` rows can be reset to
 `PENDING` once the relay is back.
 
 ### Runbook: Kafka
 
-One of three brokers down: the system keeps working; restart it and wait for
-under-replicated partitions to return to zero before touching another. All
-brokers down: requests still succeed, events queue in outboxes, sagas pause, new
-orders time out. Restore Kafka; outboxes drain in order.
+One of three brokers down: the system keeps working (observed: no failed
+checkout through a broker kill); restart it and wait for under-replicated
+partitions to return to zero before touching another. All brokers down:
+requests still succeed (observed for 30 s: no failed checkout), events queue in
+outboxes (at most ~240), sagas pause; past the saga timeout (2 min) new orders
+are cancelled as `TIMEOUT`. Restore Kafka; outboxes drain in order — observed:
+everything settled within about a minute of the brokers returning.
 
 ### Runbook: database
 
-MySQL down: every service with a database fails readiness and returns 503.
-Restore it; services reconnect by themselves. Pool saturation in one service:
+MySQL down: requests that need the database answer `503` with `Retry-After`
+(never another 5xx); event handlers keep retrying the same record until the
+database returns and never dead-letter it for an infrastructure failure
+(ADR-030). Restore it; services reconnect by themselves — observed: orders flow
+again within seconds of MySQL being healthy, and everything in flight settles
+within about 30 s, with a clean ledger. Pool saturation in one service:
 slow queries or a held transaction — look at that service's slowest traces.
 Connections high: a replica count was raised without resizing pools
 (replicas × 10 per service must stay under `max_connections`).
@@ -295,11 +308,53 @@ console (dev) or roll it back.
 | Task | How |
 |---|---|
 | Start / stop an environment | `scripts/stack.sh <env> up -d --wait` / `down` |
-| Deploy a version | CD workflow; manually: set `IMAGE_TAG` in the env file, `stack.sh <env> pull`, `up -d --wait` |
-| Roll back | Same, with the previous tag. Migrations are expand-then-contract, so the previous version runs on the newer schema |
+| Deploy a version | CD (`cd.yml`): every push to main reaches the environments listed in `CD_ENVIRONMENTS`; prod from a `v*.*.*` tag after its reviewers approve. By hand on the host: `scripts/deploy.sh <env> <tag>` |
+| Roll back | Automatic: `deploy.sh` returns to the last tag that came up healthy (`deploy/env/.<env>.deployed`) when a release fails its health wait or, outside DEV, `scripts/smoke-clean.sh`. By hand: `scripts/deploy.sh <env> <previous tag>`. Migrations are expand-then-contract, so the previous version runs on the newer schema |
+| Check a clean environment | `scripts/smoke-clean.sh <env>` on its host (reads only; no test data needed) |
+| Check the hardening (dev) | `scripts/verify-stack.sh` against the running DEV stack (CI runs it on every change) |
 | Scale a service | `deploy.replicas` in the environment's overlay (keep pools × replicas under MySQL's limit) |
 | Replay dead letters | Console → Kafka → Dead letters → Replay |
 | Rotate secrets | `JWT_SECRET`, `DATA_ENCRYPTION_KEY`: see identity operations. `EDGE_SHARED_SECRET`: update edges and services together (restart) |
 | Stop, kill, pause or restart an instance (dev) | Console → Instances |
 | Prove resilience (dev) | Console → Resilience proofs, or `scripts/prove.sh` |
 | Back up | MySQL: logical dump per database plus binlogs; Kafka is not a system of record (state is in the databases; the outbox is transient) |
+
+## 8. Observed behaviour
+
+What the resilience catalogue measured on the DEV HA topology (two instances of
+each service, three brokers, 20 simulated shoppers), full run of 2026-11-17, all
+23 experiments passed with a clean ledger audit. Reports: `build/proofs/` after
+`scripts/prove.sh`, or the console's Resilience proofs page.
+
+| Failure | Customers saw | Recovery |
+|---|---|---|
+| One instance of any service killed, or hung for 30 s | No failed checkout | The other instance carried on; Kafka moved the partitions; the hung one's work moved within the session timeout |
+| Every instance of inventory, billing or shipping down 60 s | No failed checkout (orders wait) | Waiting orders completed, or were cancelled with the right reason, within about 30 s of the service returning. Shipping was once down 20 min (the host slept): orders still completed |
+| Every catalog instance down | No failed catalog request: the edge served its cache | — |
+| One broker killed | No failed checkout | Leader election in seconds; settled within 30 s of its restart |
+| All three brokers down 30 s | No failed checkout | At most ~240 events waited in outboxes; drained in order, settled within about a minute |
+| MySQL down 20 s | Checkouts during the outage failed, all as clean `503` + `Retry-After` (32 of 51) | Settled within about 30 s of MySQL returning; no handler failure dead-lettered |
+| Payment provider down | Orders cancelled promptly as `PAYMENT_UNAVAILABLE`; nobody charged | Breaker closed by itself |
+| Carrier down | Orders still confirmed | Shipments resumed; settled within about a minute |
+| Malformed and wrongly-shaped records | No failed checkout | Every bad record dead-lettered (thousands); no consumer stalled |
+| Real events replayed byte for byte | No failed checkout | Each applied once (thousands skipped as duplicates) |
+| A flood on a topic | No failed checkout | Lag peaked in the thousands and recovered |
+| A client with no rights | Nothing | Every write, read and group join refused by the broker |
+| Slow, crashing, flapping and stuck consumers | Nothing | Other groups' lag stayed at 0 |
+| Every service's instances restarted one at a time under load | No failed checkout (304 checkouts) | — |
+
+Operational lessons from running it:
+
+- **Memory.** The HA DEV stack uses about 6.8 GiB at rest; under the
+  experiments' load it once reached Docker Desktop's 8 GB limit and the Docker
+  engine stopped answering until Docker Desktop was restarted. Give it more than
+  8 GB, or use `--lite`.
+- **Clean starts.** A crashed run can leave damage a later run trips over (a
+  dead-lettered refund, leaked reservations). Reset DEV
+  (`scripts/stack.sh dev down -v`) before a full run.
+- **Host sleep.** When a laptop sleeps the clock jumps; the experiments re-check
+  once after a deadline, so a run that spans a sleep still gives a fair verdict.
+- **Two lines of defence for once-only effects.** With the processed-events
+  check removed in a scratch build, the duplicate-storm experiment failed — and
+  the ledger still held, because each service's own state checks ignored the
+  replays. The experiment proves the first line, the audit the second.

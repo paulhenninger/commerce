@@ -13,10 +13,10 @@ It has two goals:
    from the monitoring site and see, in real time, that bad data and bad players
    do not take the system down.
 
-> **Status: design complete, implementation in progress.** The architecture and
-> every design decision are written down before the code, so development can be
-> picked up by anyone (or any model). What exists today and what is left, in
-> build order, is in [docs/implementation-plan.md](docs/implementation-plan.md).
+> **Status: built, with CI/CD.** Every milestone of the plan is done except the
+> load baseline (milestone 11). The architecture and every design decision were
+> written down before the code, and still describe it; what exists and what is
+> left is in [docs/implementation-plan.md](docs/implementation-plan.md).
 
 ## Documentation
 
@@ -25,7 +25,9 @@ It has two goals:
 | [docs/architecture.md](docs/architecture.md) | The system: services, data, events, the order / cancel / return flows, the edge, observability, networks, environments, the monitoring site, the DEV simulator and chaos lab, CI/CD |
 | [docs/decisions.md](docs/decisions.md) | Every architecture and design decision (ADR-001 …), with the alternatives rejected and why |
 | [docs/implementation-plan.md](docs/implementation-plan.md) | The build specification: repository layout, current state, conventions, per-module specs (tables, endpoints, classes, config), build order with acceptance checks, verified facts and gotchas |
-| [docs/operations.md](docs/operations.md) | How issues are discovered, alerted, tracked and debugged: signals, alert rules, the incident workflow, runbooks |
+| [docs/api.md](docs/api.md) | Every endpoint, through the two edges |
+| [docs/configuration.md](docs/configuration.md) | Every setting of every environment, and CD's |
+| [docs/operations.md](docs/operations.md) | How issues are discovered, alerted, tracked and debugged: signals, alert rules, the incident workflow, runbooks, and what the resilience experiments observed |
 | [docs/design-review.md](docs/design-review.md) | The pre-development review: improvements already folded in, and the decisions still open |
 | [docs/identity/](docs/identity/) | The identity service (from [Bastion](https://github.com/paulhenninger/bastion)): security model, API, configuration, operations |
 | [AGENTS.md](AGENTS.md) | Rules for AI coding agents working in this repository |
@@ -122,23 +124,37 @@ INT, QA and PROD are the same clean deployment at different scales. A service
 started outside DEV refuses to run if any setting points at a test facility, and
 CI fails if a DEV-only container appears in another environment's Compose model.
 
-## Running it (target commands)
+## Running it
+
+You need Docker (give Docker Desktop 8–10 GB of memory for the default HA
+topology), bash (Git Bash on Windows), curl and Python 3.
 
 ```bash
-cp deploy/env/dev.env.example deploy/env/dev.env     # then fill the two keys it asks for
-scripts/stack.sh dev up -d --build --wait          # HA topology: ~6.4 GiB; give Docker 8-10 GB
-scripts/stack.sh dev --lite up -d --build --wait   # single instances: less memory
+git clone https://github.com/paulhenninger/commerce.git && cd commerce
+scripts/stack.sh dev up -d --build --wait    # the DEV stack: ~10 min the first time
+scripts/smoke.sh                             # 61 end-to-end checks
+scripts/prove.sh --quick                     # four resilience experiments, ~12 min
 ```
+
+The first `stack.sh dev` creates `deploy/env/dev.env` with freshly generated
+secrets. `scripts/stack.sh dev --lite up -d --build --wait` runs single instances
+and one broker instead (less memory; the HA experiments then report
+`NOT_APPLICABLE`). `scripts/stack.sh dev down` stops it; add `-v` to delete its data.
 
 | URL (dev) | What |
 |---|---|
-| http://localhost:8080 | Storefront |
-| http://localhost:8090 | Ops console (monitoring, instances, traffic simulator, chaos lab, resilience proofs) |
+| http://localhost:8081 | Storefront (and its back office, for administrators) |
+| http://localhost:8082 | Ops console: monitoring, Kafka and dead letters, incidents, instances, traffic simulator, chaos lab, resilience proofs |
 | http://localhost:3000 | Grafana (dashboards, logs, traces) |
 | http://localhost:8025 | Mailpit (every email the system sends) |
 
 DEV seeds two accounts: `admin@example.com` (administrator) and
-`shopper@example.com`; passwords are in `deploy/env/dev.env.example`.
+`shopper@example.com`; their passwords are `DEV_ADMIN_PASSWORD` and
+`DEV_SHOPPER_PASSWORD` in `deploy/env/dev.env`.
+
+INT, QA and PROD are deployed by CD from the images CI tested; see
+[docs/configuration.md](docs/configuration.md#cd-github) and
+[docs/operations.md](docs/operations.md#7-routine-operations).
 
 ## Key decisions at a glance
 

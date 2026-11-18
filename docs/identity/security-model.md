@@ -1,5 +1,13 @@
 # Security model
 
+> **In this repository** identity is `services/identity`, served by the
+> `storefront-web` edge (`web/storefront`), started with the rest of the system by
+> `scripts/stack.sh` from `deploy/`. Bastion's single-app layout maps as:
+> `docker-compose.yml` → `deploy/compose.yml`; `.env` → `deploy/env/<env>.env`;
+> `db/roles.sql` → `deploy/mysql/roles.sql`; `frontend/` → `web/storefront/`;
+> `Dockerfile` → `services/Dockerfile`; the `db` and `web` containers →
+> `mysql` and `storefront-web`. System-wide settings: [../configuration.md](../configuration.md).
+
 This document is the honest answer to "how secure is Commerce?". It lists what
 Commerce protects, the attacks it is designed to stop, how each is stopped, and
 which test proves it. Then it lists what Commerce **cannot** protect against and

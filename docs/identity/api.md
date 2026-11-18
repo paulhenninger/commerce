@@ -1,5 +1,13 @@
 # API reference
 
+> **In this repository** identity is `services/identity`, served by the
+> `storefront-web` edge (`web/storefront`), started with the rest of the system by
+> `scripts/stack.sh` from `deploy/`. Bastion's single-app layout maps as:
+> `docker-compose.yml` → `deploy/compose.yml`; `.env` → `deploy/env/<env>.env`;
+> `db/roles.sql` → `deploy/mysql/roles.sql`; `frontend/` → `web/storefront/`;
+> `Dockerfile` → `services/Dockerfile`; the `db` and `web` containers →
+> `mysql` and `storefront-web`. System-wide settings: [../configuration.md](../configuration.md).
+
 Base path `/api/v1`. JSON in and out. Authenticated routes take
 `Authorization: Bearer <accessToken>`. The refresh token is an `HttpOnly`
 cookie (`commerce_refresh`, path `/api/v1/auth`) that the browser sends by itself.

@@ -989,6 +989,39 @@ replica or broker, which report "not applicable" instead of running.
 Deployment is `docker compose pull && up -d --wait` over SSH on the target host,
 with the image tag pinned; a failed health wait rolls back to the previous tag.
 
+As built (milestone 10):
+
+- **CI on main runs inside CD.** `ci.yml` triggers on pull requests and is
+  called by `cd.yml` (`workflow_call`) on every push to main and version tag, so
+  a push runs it once, and nothing is pushed or deployed unless it passed.
+- **The stack job** starts the DEV HA topology on a GitHub-hosted runner, then
+  runs `scripts/smoke.sh` and `scripts/prove.sh --quick` (replica crash, broker
+  crash, poison data, intruder); proof reports are uploaded. The repository is
+  public (ADR-032): its runners have the memory for the HA stack, and CodeQL and
+  dependency review are available.
+- **Hardening verification** is `scripts/verify-stack.sh`, Bastion's checks
+  extended to every container: both edges' headers and refusals, which
+  containers can reach the internet, MySQL, Kafka and the Docker proxy, every
+  database login (TLS, rows only), and every container's runtime restrictions and
+  Docker-socket mounts. Alloy is the one container running as root
+  (implementation plan §4); the check says so instead of skipping it.
+- **Also, after Bastion:** `dependency-submission.yml` (so Dependabot sees the
+  Gradle graph) and `.github/dependabot.yml` (security updates; base-image
+  digests moved weekly).
+- **Images** are `${IMAGE_REGISTRY}commerce-<name>:${IMAGE_TAG}`; CD builds every
+  image once (DEV-only ones included, for DEV), tags it with the first 12
+  characters of the commit SHA and pushes it to `ghcr.io/<owner>/`. The run's
+  summary lists each image's digest.
+- **Deploys** are `deploy.yml`, one job per environment, each a GitHub
+  Environment holding its host, an SSH key and the host's known key (verified,
+  never trusted on first use). It copies `deploy/` and `scripts/` (never the
+  host's `deploy/env/<env>.env`), signs the host in to GHCR with the job's own
+  short-lived token, and runs `scripts/deploy.sh <env> <tag>`: pull, `up --wait`,
+  and outside DEV `scripts/smoke-clean.sh` (reads only, needs no test data); on
+  failure it returns to the last tag that came up healthy. An environment is
+  deployed only once it is listed in the repository variable `CD_ENVIRONMENTS`,
+  so main stays green before the hosts exist.
+
 ## 15. Known limits
 
 Stated so nobody assumes otherwise:
