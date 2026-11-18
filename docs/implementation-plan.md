@@ -15,7 +15,17 @@ and the architecture disagree, the architecture wins — fix this document.
 
 ## 1. Current state
 
-As of 2026-11-17: **milestones 0–9b are complete**; milestone 10 (CI/CD and docs) is in progress.
+As of 2026-11-17: **milestones 0–10 are complete**; milestone 10a (DEV
+simulations off by default, ADR-033) is next, then 11.
+
+Milestone 10 acceptance (PR #12, a clean Linux clone on GitHub's runners): CI
+green — `./gradlew build` with no test skipped, both SPAs, clean deployments,
+dependency review, and the DEV HA stack with `smoke.sh` (61 checks) and
+`prove.sh --quick` (4 of 4 passed, clean audits); Security green — gitleaks,
+Trivy on all 13 images and both lockfiles, `verify-stack.sh` (the "cannot reach
+the internet" checks included, which pass on Linux); CodeQL green. The README
+quickstart is exactly the commands CI runs. CD's deploy jobs have not run: no
+environment is listed in `CD_ENVIRONMENTS` yet.
 
 | Area | State |
 |---|---|
