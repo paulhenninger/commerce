@@ -1,0 +1,46 @@
+name: Dependency submission
+
+# Dependabot can only raise an alert for a dependency GitHub knows about. For npm
+# it reads the lockfiles; for Gradle it reads nothing useful, so without this
+# workflow the dependency graph would hold every npm package and no Java one:
+# Spring Boot, Spring Kafka, Spring Security, Tomcat, Jackson, the MySQL driver
+# and the rest would never be checked against an advisory.
+#
+# This resolves the real graph from the build and submits it. Only from main
+# (the graph belongs to it), when the build's dependency declarations change;
+# the weekly run re-submits in case a push run ever failed.
+on:
+  push:
+    branches: [main]
+    paths:
+      - build.gradle
+      - settings.gradle
+      - '**/build.gradle'
+      - gradle/**
+      - .github/workflows/dependency-submission.yml
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write # the Dependency Submission API requires it
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "25"
+      # Runs the committed wrapper (checksum-verified distribution).
+      - uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        env:
+          # What ships in the images, and nothing else: build-only tools (the
+          # SpotBugs engine) and test-only jars (Testcontainers) never reach
+          # production. Trivy still scans the images' jars (security.yml).
+          DEPENDENCY_GRAPH_INCLUDE_CONFIGURATIONS: runtimeClasspath

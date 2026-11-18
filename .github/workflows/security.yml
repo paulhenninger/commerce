@@ -1,0 +1,93 @@
+name: Security
+
+# Supply chain and containers, on every PR, on main, and daily (new advisories
+# land against code that hasn't changed):
+#   secrets  gitleaks over the whole history (reviewed test values in .gitleaks.toml)
+#   images   builds every image this repository makes, fails on any fixable
+#            HIGH/CRITICAL vulnerability in their OS packages or jars (Trivy), and
+#            on both npm lockfiles (bundled into static files, invisible in an image)
+#   stack    runs the DEV stack on those images and proves the hardening holds:
+#            scripts/verify-stack.sh (edge headers and refusals, what each
+#            container can reach, database logins and TLS, read-only /
+#            no-capability containers, who holds the Docker socket)
+# Reviewed exceptions live in .trivyignore, each with an expiry.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Scanners run from their own images, pinned by digest; no third-party action
+  # runs here (trivy-action's tags were hijacked in March 2026).
+  TRIVY: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+  GITLEAKS: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # every commit: a secret deleted later is still in the history
+      - name: Scan the history for secrets
+        # --redact: a finding names the file and rule, never the value.
+        run: >-
+          docker run --rm -v "$PWD:/repo" "$GITLEAKS"
+          git /repo --config /repo/.gitleaks.toml --no-banner --redact --exit-code 1
+
+  images-and-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build every image
+        # --pull: judge this week's base-image fixes, not a cached layer's.
+        run: scripts/stack.sh dev build --pull
+
+      - name: Scan the images and the npm lockfiles
+        run: |
+          set -u
+          status=0
+          scan() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/src:ro" \
+                     -v trivy-cache:/root/.cache/trivy "$TRIVY" "$@" --quiet --scanners vuln \
+                     --ignore-unfixed --severity HIGH,CRITICAL --ignorefile /src/.trivyignore --exit-code 1 || status=1; }
+          for image in $(docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^commerce-.*:local$' | sort); do
+            echo "::group::$image"; scan image "$image"; echo "::endgroup::"
+          done
+          for lock in web/storefront/package-lock.json web/ops-console/package-lock.json; do
+            echo "::group::$lock"; scan fs "/src/$lock"; echo "::endgroup::"
+          done
+          [ "$status" -eq 0 ] || { echo "::error::a fixable HIGH or CRITICAL vulnerability (above)"; exit 1; }
+
+      - name: Start the hardened stack
+        run: |
+          if ! scripts/stack.sh dev up -d --no-build --wait --wait-timeout 600; then
+            scripts/stack.sh dev ps -a
+            exit 1
+          fi
+
+      - name: Verify the hardening holds
+        run: scripts/verify-stack.sh
+
+      - name: Logs on failure
+        if: failure()
+        run: scripts/stack.sh dev logs --tail 150 || true
+
+      - name: Tear down
+        if: always()
+        run: scripts/stack.sh dev down -v >/dev/null 2>&1 || true

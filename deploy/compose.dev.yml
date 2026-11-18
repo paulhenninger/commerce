@@ -44,7 +44,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: simulators
-    image: commerce-simulators:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-simulators:${IMAGE_TAG:-local}
     networks: [sandbox, telemetry, simulators-ingress]
     environment:
       COMMERCE_ENV: dev
@@ -100,7 +100,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: testkit
-    image: commerce-testkit:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-testkit:${IMAGE_TAG:-local}
     depends_on:
       storefront-web:
         condition: service_healthy
@@ -140,7 +140,9 @@ services:
   docker-proxy:
     <<: *hardened
     image: nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
-    group_add: ["0"]
+    # The socket's group: root on Docker Desktop, "docker" (a number that differs
+    # from host to host) on Linux. scripts/stack.sh finds it.
+    group_add: ["${DOCKER_SOCKET_GID:-0}"]
     entrypoint: ["nginx", "-g", "daemon off;"]
     networks: [docker]
     volumes:
@@ -166,7 +168,7 @@ services:
       dockerfile: services/Dockerfile
       args:
         SERVICE: controller
-    image: commerce-controller:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}commerce-controller:${IMAGE_TAG:-local}
     depends_on:
       docker-proxy:
         condition: service_healthy

@@ -112,6 +112,14 @@ if [ "$use_ha" = true ]; then
   done
 fi
 
+# The group that may use the Docker socket, for the DEV docker-proxy: on Linux the
+# socket belongs to the "docker" group, whose number differs from host to host;
+# Docker Desktop's (not visible from Windows) is root's, 0.
+if [ -z "${DOCKER_SOCKET_GID:-}" ] && [ -S /var/run/docker.sock ]; then
+  DOCKER_SOCKET_GID="$(stat -c %g /var/run/docker.sock 2>/dev/null || stat -f %g /var/run/docker.sock)"
+fi
+export DOCKER_SOCKET_GID="${DOCKER_SOCKET_GID:-0}"
+
 # Each environment's networks live in their own private /16 (see compose.yml),
 # so environments side by side on one host never overlap. Override with
 # COMMERCE_NET when running this script.

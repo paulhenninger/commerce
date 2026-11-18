@@ -1,0 +1,189 @@
+name: CI
+
+# Every pull request, and (through cd.yml, which calls this workflow before it
+# builds anything it will ship) every push to main and every version tag.
+#
+#   backend      runtime versions agree; ./gradlew build: unit, event-contract
+#                fixtures, Testcontainers integration (insisting none was
+#                skipped), SpotBugs with find-sec-bugs
+#   frontend     both SPAs: npm audit of what ships, type-check and build
+#   deployments  INT, QA and PROD contain no test tooling
+#   stack        the DEV stack (HA topology) from freshly built images:
+#                scripts/smoke.sh, then the resilience subset (prove.sh --quick)
+#   dependency-review  a PR may not add a dependency with a known vulnerability
+#
+# No push trigger here: cd.yml runs this on main, so a push does not run it twice.
+on:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+# Cancel superseded PR runs; never cancel a main run halfway.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# One place for the runtime versions CI tests. "Runtime versions agree" fails the
+# build if build.gradle, a Dockerfile, Compose or a test container drifts from
+# them, so CI never tests one runtime while an image ships another.
+#   Java 25:   the current LTS (next: 29).
+#   Node 26:   Active LTS since 2026-10-28.
+#   MySQL 9.7: the current LTS (26.x are short-lived Innovation releases).
+env:
+  JAVA_VERSION: "25"
+  NODE_VERSION: "26"
+  MYSQL_VERSION: "9.7"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      # Every third-party action is pinned to a commit, not a tag: a re-pointed
+      # tag (as happened to trivy-action in March 2026) can't change what runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Runtime versions agree
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          gradle=$(sed -n 's/.*JavaLanguageVersion\.of(\([0-9]*\)).*/\1/p' build.gradle | sort -u)
+          docker=$(sed -n 's/^FROM eclipse-temurin:\([0-9]*\)[^ ]*.*/\1/p' services/Dockerfile | sort -u)
+          node=$(sed -n 's/^FROM node:\([0-9]*\)[^ ]*.*/\1/p' web/storefront/Dockerfile web/ops-console/Dockerfile | sort -u)
+          mysql=$({ grep -hoE 'mysql:[0-9]+\.[0-9]+' deploy/compose.yml; grep -rhoE --include='*.java' 'mysql:[0-9]+\.[0-9]+' platform services; } | sed 's/mysql://' | sort -u)
+          echo "java: gradle=$gradle docker=$docker  node: $node  mysql: $mysql"
+          [ "$gradle" = "$JAVA_VERSION" ] || fail "build.gradle targets Java '$gradle', CI tests $JAVA_VERSION"
+          [ "$docker" = "$JAVA_VERSION" ] || fail "services/Dockerfile uses Java '$docker', CI tests $JAVA_VERSION"
+          [ "$node" = "$NODE_VERSION" ] || fail "the SPA Dockerfiles build on Node '$node', CI tests $NODE_VERSION"
+          [ "$mysql" = "$MYSQL_VERSION" ] || fail "MySQL versions '$mysql' differ from $MYSQL_VERSION (Compose and the test containers must match)"
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Build, test and analyse
+        run: ./gradlew build --console=plain
+
+      # Testcontainers tests skip themselves without Docker. Skipped in CI would
+      # mean green without the database, Kafka or the migrations ever having
+      # run, so insist that every test ran — Bastion's MySQL test by name.
+      - name: Every test ran
+        run: |
+          set -eu
+          files=$(find . -path '*/build/test-results/test/*.xml' -not -path './web/*')
+          [ -n "$files" ] || { echo "::error::no test results"; exit 1; }
+          totals=$(cat $files | grep -o '<testsuite [^>]*' | awk '
+            { for (i = 1; i <= NF; i++) { split($i, kv, "="); gsub(/"/, "", kv[2]);
+                if (kv[1] == "tests") t += kv[2]; if (kv[1] == "skipped") s += kv[2] } }
+            END { print t, s }')
+          set -- $totals
+          echo "$1 tests, $2 skipped"
+          [ "$2" -eq 0 ] || { echo "::error::$2 tests were skipped"; exit 1; }
+          f=services/identity/build/test-results/test/TEST-com.thirdstone.commerce.identity.MySqlMigrationTest.xml
+          [ -f "$f" ] || { echo "::error::$f missing: the MySQL migration test did not run"; exit 1; }
+
+      - name: Upload test and SpotBugs reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-reports
+          path: |
+            **/build/reports/tests/
+            **/build/reports/spotbugs/
+          if-no-files-found: ignore
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [storefront, ops-console]
+    defaults:
+      run:
+        working-directory: web/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/${{ matrix.app }}/package-lock.json
+      - run: npm ci --ignore-scripts
+      # Only what ships to browsers; dev tooling advisories don't reach users.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Type-check and build
+        run: npm run build
+
+  deployments:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: INT, QA and PROD contain no test tooling
+        run: scripts/verify-clean-deployments.sh
+
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # stack.sh creates deploy/env/dev.env with fresh secrets on first use.
+      - name: Start the DEV stack (HA topology)
+        run: |
+          if ! scripts/stack.sh dev up -d --build --wait --wait-timeout 600; then
+            scripts/stack.sh dev ps -a
+            exit 1
+          fi
+
+      - name: End-to-end smoke test
+        run: scripts/smoke.sh
+
+      # Replica crash, broker crash, poison data, intruder; each ends with a
+      # ledger audit of every order the simulated shoppers placed.
+      - name: Resilience proofs (quick subset)
+        run: scripts/prove.sh --quick
+
+      - name: Upload proof reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: proofs
+          path: build/proofs/
+          if-no-files-found: ignore
+
+      - name: State and logs on failure
+        if: failure()
+        run: |
+          scripts/stack.sh dev ps -a || true
+          docker stats --no-stream || true
+          scripts/stack.sh dev logs --tail 150 || true
+
+      - name: Tear down
+        if: always()
+        run: scripts/stack.sh dev down -v >/dev/null 2>&1 || true
+
+  # Blocks a PR that adds a dependency with a known vulnerability.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
