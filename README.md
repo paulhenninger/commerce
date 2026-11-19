@@ -14,8 +14,9 @@ It has two goals:
    bad data and bad players do not take the system down. Nothing runs until you
    switch it on.
 
-> **Status: built, with CI/CD.** Every milestone of the plan is done except the
-> load baseline (milestone 11). The architecture and every design decision were
+> **Status: built, with CI/CD.** Every milestone of the plan is done, including
+> the load baseline (milestone 11), whose results are in
+> [architecture §8](docs/architecture.md#8-performance). The architecture and every design decision were
 > written down before the code, and still describe it; what exists and what is
 > left is in [docs/implementation-plan.md](docs/implementation-plan.md).
 
