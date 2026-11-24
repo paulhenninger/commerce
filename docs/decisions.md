@@ -414,7 +414,7 @@ Verified against this machine and the registries on 2026-11-16.
 | Kafka broker | `apache/kafka:4.4.0` | KRaft, no ZooKeeper |
 | MySQL | 9.7 (LTS) | Bastion's pinned image |
 | Node / React / Vite / TypeScript | 26 / 19 / 8 / 7 | As Bastion's frontend |
-| nginx | `nginxinc/nginx-unprivileged:1.30` | Bastion's pinned image; `resolve` in upstreams needs ≥ 1.27.3 |
+| nginx | `nginx/nginx-unprivileged:1.30` | Bastion's pinned image; `resolve` in upstreams needs ≥ 1.27.3 |
 | Prometheus / Alertmanager | v3.16.0 / v0.35.0 | |
 | Grafana / Loki / Tempo / Alloy | 13.3.1 / 3.7.10 / 2.10.10 / v1.22.0 | Tempo 2.x deliberately (3.x is a different architecture) |
 | Resilience4j | 2.x core modules | Used programmatically, no Spring Boot starter |
