@@ -147,7 +147,7 @@ services:
   # port, and the docker network is its only one.
   docker-proxy:
     <<: *hardened
-    image: nginxinc/nginx-unprivileged:1.31.7-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e
+    image: nginx/nginx-unprivileged:1.31.10-alpine@sha256:86628f2c9eaa5e84e3b98d25e26563c4a4f9b0ead9cf5656da4731d86e0621de
     # The socket's group: root on Docker Desktop, "docker" (a number that differs
     # from host to host) on Linux. scripts/stack.sh finds it.
     group_add: ["${DOCKER_SOCKET_GID:-0}"]
